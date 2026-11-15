@@ -61,3 +61,27 @@ def test_b1_a_cte_name_does_not_hide_a_relation_of_that_name(standby, form: str)
 def test_b1_a_cte_with_its_own_name_still_reads(standby) -> None:
     result = run_query(standby, "WITH c AS (SELECT id FROM app.vault) SELECT id FROM c")
     assert result["rows"] == [[1]]
+
+
+# --- B2: a JOIN's alias over a restricted table ------------------------------------------------------
+
+JOIN_ALIAS = {
+    "whole-row": ("SELECT j FROM (app.vault v JOIN app.scratch s ON s.i = v.id) AS j", "policy.whole-row"),
+    "row_to_json": ("SELECT row_to_json(j) FROM (app.vault v JOIN app.scratch s ON s.i = v.id) AS j",
+                    "policy.whole-row"),
+    "column-list": ("SELECT j.c FROM (app.vault CROSS JOIN app.scratch) AS j(a, b, c, d) LIMIT 1",
+                    "policy.alias-column-list"),
+    "nested": ("SELECT k FROM ((app.vault v JOIN app.scratch s ON s.i = v.id) JOIN app.other o "
+               "ON o.id = v.id) AS k", "policy.whole-row"),
+}
+
+
+@pytest.mark.parametrize("form", list(JOIN_ALIAS))
+def test_b2_a_join_alias_over_a_restricted_table_is_refused(standby, form: str) -> None:
+    sql, rule = JOIN_ALIAS[form]
+    assert refused(run_query, standby, sql).rule == rule
+
+
+def test_b2_listed_columns_through_a_join_alias_still_read(standby) -> None:
+    result = run_query(standby, "SELECT j.id FROM (app.vault v JOIN app.scratch s ON s.i = v.id) AS j")
+    assert result["rows"] == [[1]]

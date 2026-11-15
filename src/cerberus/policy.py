@@ -72,6 +72,7 @@ class _Refs(Visitor):
         self.range_nodes: list[ast.RangeVar] = []
         self.column_refs: list[tuple] = []
         self.natural_or_using: list[ast.JoinExpr] = []
+        self.aliased_joins: list[ast.JoinExpr] = []
 
     def visit_RangeVar(self, ancestors, node: ast.RangeVar) -> None:
         alias = node.alias.aliasname if node.alias else None
@@ -85,6 +86,8 @@ class _Refs(Visitor):
     def visit_JoinExpr(self, ancestors, node: ast.JoinExpr) -> None:
         if node.isNatural or node.usingClause:
             self.natural_or_using.append(node)
+        if node.alias is not None:
+            self.aliased_joins.append(node)
 
 
 def _subtree_ranges(node) -> list[ast.RangeVar]:
@@ -305,6 +308,21 @@ class SurfaceCheck:
             for (col,) in self.lookup(_COLUMNS, (rel.oid,)):
                 if col not in listed:
                     hidden.setdefault(col, key)
+
+        # A JOIN's alias covers every column of the tables under it: a whole-row reference to it, or
+        # an alias column list on it, reaches the restricted columns like the table's own alias would.
+        for join in refs.aliased_joins:
+            under = [n for n in _subtree_ranges(join) if n in restricted_nodes]
+            if not under:
+                continue
+            key = next(self.flag_of[rel.oid] for _, rel, node in restricted if node in under)
+            if join.alias.colnames:
+                raise Refusal(
+                    "policy.alias-column-list",
+                    f"an alias column list on a join over {key} can rename a restricted column; drop "
+                    "the list",
+                )
+            handles[join.alias.aliasname] = key
 
         for join in refs.natural_or_using:
             if any(n in restricted_nodes for n in _subtree_ranges(join)):
