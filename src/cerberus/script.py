@@ -4,7 +4,8 @@ The whole script is checked before connecting: no transaction control (``SAVEPOI
 excepted), nothing a rollback does not undo or that cannot run inside a transaction, no denylisted
 function, no client meta-command, and no statement that escapes the checks (``PREPARE``/``EXECUTE``,
 ``DECLARE``/``FETCH``, ``COPY … TO``, ``DO``, ``CREATE FUNCTION/PROCEDURE/TRIGGER/RULE``,
-``SET``/``RESET``/``SET ROLE``, ``LOAD``; and a column rename on a flagged table). The statements then
+``SET``/``RESET``/``SET ROLE``, ``LOAD``; and any ``ALTER``/rename/``SET SCHEMA`` naming a flagged
+relation). The statements then
 run in one explicit transaction, each under the connection's bound, encoding and search path and the
 function rule and the read-surface policy (no expression may read a restricted column; Spec v1.1).
 A statement that returns rows the policy did not check (other than ``SHOW`` and ``EXPLAIN``) stops the
@@ -25,7 +26,7 @@ from typing import Callable
 import pglast
 import psycopg
 from pglast import ast
-from pglast.enums import ObjectType, TransactionStmtKind
+from pglast.enums import TransactionStmtKind
 from pglast.visitors import Visitor
 
 from cerberus import gate
@@ -51,6 +52,21 @@ _REFUSED_KINDS = {
     ast.VariableSetStmt: "SET / RESET would override the connection's bound, search path or role",
     ast.LoadStmt: "LOAD loads a library into the server process",
 }
+# Statements that reshape a relation: refused when any relation they name is flagged.
+_RESHAPING = (ast.AlterTableStmt, ast.RenameStmt, ast.AlterObjectSchemaStmt)
+
+
+def _range_vars(tree: ast.Node) -> list[ast.RangeVar]:
+    found: list[ast.RangeVar] = []
+
+    class _V(Visitor):
+        def visit_RangeVar(self, ancestors, node):
+            found.append(node)
+
+    _V()(tree)
+    return found
+
+
 # Statements EXPLAIN can take without running them (the plan source of the read-surface check).
 _EXPLAINABLE = (ast.SelectStmt, ast.InsertStmt, ast.UpdateStmt, ast.DeleteStmt, ast.MergeStmt,
                 ast.CreateTableAsStmt)
@@ -198,13 +214,16 @@ def run_script(conn: Connection, script: str, *, commit: bool = False,
                 # column, so no value moves to a readable place (Spec v1.1). Writing one, as a SET or
                 # INSERT target, is not a column reference and passes.
                 surface = SurfaceCheck(conn, lookup)
-                if (isinstance(stmt.tree, ast.RenameStmt)
-                        and stmt.tree.renameType == ObjectType.OBJECT_COLUMN
-                        and stmt.tree.relation is not None
-                        and (key := surface.policy_key_of(stmt.tree.relation))):
-                    raise Refusal("policy.rename-column",
-                                  f"renaming a column of {key} would move a restricted value under a "
-                                  "listed name; the policy lists columns by name")
+                if isinstance(stmt.tree, _RESHAPING):
+                    # A statement that reshapes a flagged relation (renames a column, detaches a
+                    # partition, drops inheritance, changes a column, moves it to another schema)
+                    # can move a restricted value to where the policy, keyed by names and by the
+                    # inheritance tree, no longer looks.
+                    for node in _range_vars(stmt.tree):
+                        if key := surface.policy_key_of(node):
+                            raise Refusal("policy.reshapes-flagged-relation",
+                                          f"the statement alters {key}, a relation this connection "
+                                          "restricts; a script may not reshape it")
                 surface.check(parsed, plan=isinstance(stmt.tree, _EXPLAINABLE))
                 cursor = session.execute(stmt.text)
             except Refusal as refusal:

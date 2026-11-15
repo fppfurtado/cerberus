@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from pglast import ast
-from pglast.visitors import Visitor
+from pglast.visitors import Skip, Visitor
 
 from cerberus.config import Connection
 from cerberus.gate import Name, ParsedQuery, is_denied
@@ -88,7 +88,12 @@ class _Refs(Visitor):
     def visit_OnConflictClause(self, ancestors, node: ast.OnConflictClause) -> None:
         # EXCLUDED.<col> is the row the statement itself proposes, not a stored value: reading it
         # moves nothing out of a restricted column.
+        # Only references at the clause's own level: inside a subquery, `excluded` can be an alias
+        # of a stored table, so the walk stops at every sublink.
         class _Excluded(Visitor):
+            def visit_SubLink(inner, a, sub):
+                return Skip
+
             def visit_ColumnRef(inner, a, ref):
                 f = ref.fields
                 if len(f) == 2 and isinstance(f[0], ast.String) and f[0].sval == "excluded":

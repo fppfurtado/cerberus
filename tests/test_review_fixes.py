@@ -234,8 +234,8 @@ def test_v11_an_upsert_that_writes_its_own_value_passes(writable) -> None:
 RENAME_AND_CODE = {
     "rename-swap": ("ALTER TABLE app.vault RENAME COLUMN label TO label_old;\n"
                     "ALTER TABLE app.vault RENAME COLUMN secret TO label;\nSELECT label FROM app.vault;",
-                    "policy.rename-column"),
-    "rename-restricted-column": ("ALTER TABLE vault RENAME COLUMN secret TO s2;", "policy.rename-column"),
+                    "policy.reshapes-flagged-relation"),
+    "rename-restricted-column": ("ALTER TABLE vault RENAME COLUMN secret TO s2;", "policy.reshapes-flagged-relation"),
     "trigger-copy": ("CREATE FUNCTION app.t_copy() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN "
                      "NEW.label := NEW.secret; RETURN NEW; END $f$;\n"
                      "CREATE TRIGGER t_copy BEFORE UPDATE ON app.vault FOR EACH ROW EXECUTE FUNCTION app.t_copy();\n"
@@ -256,3 +256,49 @@ def test_b9_b10_renames_on_flagged_tables_and_script_defined_code_are_refused(wr
 def test_b9_renaming_a_column_of_an_unflagged_table_passes(writable) -> None:
     result = run_script(writable, "ALTER TABLE app.other RENAME COLUMN secret TO note;")
     assert result["statements"][0]["command"] == "ALTER TABLE"
+
+
+# --- B11: reshaping a flagged relation; B12: `excluded` as an alias inside a subquery ---------------
+
+RESHAPE_POLICY = ('[connection.r.policy.columns]\n"app.vault" = ["id", "label"]\n'
+                  '"app.pvault" = ["id", "label"]\n"app.ivault" = ["id", "label"]\n')
+
+
+@pytest.fixture
+def reshaper(schema: Cluster, declare):
+    return declare("r", schema.primary, "writable", 'search_path = ["app"]\n' + RESHAPE_POLICY)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "ALTER TABLE app.pvault DETACH PARTITION app.pvault_p1;\nSELECT secret FROM app.pvault_p1;",
+        "ALTER TABLE app.ivault_c NO INHERIT app.ivault;\nSELECT secret FROM app.ivault_c;",
+        "ALTER TABLE app.vault ALTER COLUMN secret TYPE text;",
+        "ALTER TABLE app.vault DROP COLUMN label;",
+        "ALTER TABLE app.vault SET SCHEMA public;",
+        "ALTER TABLE app.vault RENAME TO vault2;",
+    ],
+    ids=["detach-partition", "no-inherit", "alter-column", "drop-column", "set-schema", "rename-table"],
+)
+def test_b11_a_script_may_not_reshape_a_flagged_relation(reshaper, script: str) -> None:
+    assert refused(run_script, reshaper, script).rule == "policy.reshapes-flagged-relation"
+
+
+def test_b11_reshaping_an_unflagged_relation_passes(reshaper) -> None:
+    result = run_script(reshaper, "ALTER TABLE app.other ADD COLUMN note text;")
+    assert result["statements"][0]["command"] == "ALTER TABLE"
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "INSERT INTO app.vault VALUES (1,'x','y') ON CONFLICT (id) DO UPDATE "
+        "SET label = (SELECT excluded.secret FROM app.vault AS excluded LIMIT 1);\nSELECT label FROM app.vault;",
+        "INSERT INTO app.vault VALUES (1,'x','y') ON CONFLICT (id) DO UPDATE SET label = 'z' "
+        "WHERE EXISTS (SELECT 1 FROM app.vault AS excluded WHERE excluded.secret LIKE 'P%');",
+    ],
+    ids=["subquery-set", "subquery-where-oracle"],
+)
+def test_b12_excluded_as_an_alias_inside_a_subquery_is_a_stored_read(writable, script: str) -> None:
+    assert refused(run_script, writable, script).rule == "policy.column-not-listed"
