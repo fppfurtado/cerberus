@@ -85,3 +85,21 @@ def test_b2_a_join_alias_over_a_restricted_table_is_refused(standby, form: str) 
 def test_b2_listed_columns_through_a_join_alias_still_read(standby) -> None:
     result = run_query(standby, "SELECT j.id FROM (app.vault v JOIN app.scratch s ON s.i = v.id) AS j")
     assert result["rows"] == [[1]]
+
+
+# --- B3: a policy key that names nothing refuses the connection --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        '[connection.standby.policy.columns]\n"app.Vault" = ["id", "label"]\n',
+        '[connection.standby.policy.columns]\n"app.vualt" = ["id", "label"]\n',
+        '[connection.standby.policy]\ndeny_relations = ["app.Hidden"]\n',
+    ],
+    ids=["columns-case-mismatch", "columns-typo", "deny-case-mismatch"],
+)
+def test_b3_an_unresolved_policy_key_refuses_every_query(schema: Cluster, declare, policy: str) -> None:
+    conn = declare("standby", reader(schema.standby), "server-enforced", policy)
+    for sql in ("SELECT secret FROM app.vault", "SELECT id FROM app.hidden", "SELECT 1"):
+        assert refused(run_query, conn, sql).rule == "policy.key-unresolved"

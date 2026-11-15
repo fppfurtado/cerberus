@@ -159,7 +159,16 @@ class SurfaceCheck:
             schema, _, name = key.partition(".")
             row = self._one(_BY_NAME, (schema, name))
             if row is None:
-                continue
+                if key in BUILTIN_DENY_RELATIONS:
+                    continue  # a catalog relation this server version does not have
+                # A key that names nothing (a typo, a case mismatch) would leave the table it meant
+                # fully readable: refuse the connection until the declaration is fixed.
+                raise Refusal(
+                    "policy.key-unresolved",
+                    f"the policy of connection {self.conn.name!r} names {key}, which is not a relation "
+                    "on this server (names are exact: unquoted identifiers are lower case); fix the "
+                    "declaration",
+                )
             self.flag_of[row[0]] = key
             for (child,) in self.lookup(_DESCENDANTS, (row[0],)):
                 self.flag_of.setdefault(child, key)
