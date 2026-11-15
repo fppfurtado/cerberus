@@ -238,3 +238,30 @@ def declare(tmp_path, monkeypatch: pytest.MonkeyPatch):
         return config.load(name)
 
     return _declare
+
+
+@pytest.fixture(scope="session")
+def preconditions(schema: Cluster) -> Cluster:
+    """Databases for SP-T6: a LATIN1 one, two holding ``t`` in different schemas, and a table big
+    enough for a parallel plan."""
+    with psycopg.connect(schema.primary.conninfo(), autocommit=True) as conn:
+        conn.execute(
+            "CREATE DATABASE latin1db ENCODING 'LATIN1' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0"
+        )
+        conn.execute("CREATE DATABASE db_a")
+        conn.execute("CREATE DATABASE db_b")
+        conn.execute("CREATE TABLE app.big AS SELECT g AS i FROM generate_series(1, 300000) g")
+        conn.execute("ANALYZE app.big")
+        conn.execute("GRANT SELECT ON app.big TO reader")
+        for setting in ("parallel_setup_cost = 0", "parallel_tuple_cost = 0",
+                        "min_parallel_table_scan_size = 0"):
+            conn.execute(f"ALTER ROLE reader SET {setting}")
+    with psycopg.connect(schema.primary.conninfo(dbname="latin1db"), autocommit=True) as conn:
+        conn.execute("CREATE TABLE words (w text)")
+        conn.execute("INSERT INTO words VALUES ('ação'), ('acao')")
+    for db, sch in (("db_a", "sa"), ("db_b", "sb")):
+        with psycopg.connect(schema.primary.conninfo(dbname=db), autocommit=True) as conn:
+            conn.execute(f"CREATE SCHEMA {sch}")
+            conn.execute(f"CREATE TABLE {sch}.t (x int)")
+            conn.execute(f"INSERT INTO {sch}.t VALUES (1)")
+    return schema

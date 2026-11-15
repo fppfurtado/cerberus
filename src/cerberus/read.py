@@ -31,6 +31,12 @@ def run_query(conn: Connection, sql: str) -> dict[str, object]:
             rows = [list(r) for r in cursor.fetchall()] if cursor.description else []
         except Refusal as refusal:
             raise session.refuse(refusal.rule, refusal.detail) from None
+        except psycopg.errors.QueryCanceled:
+            raise session.refuse(
+                "limit.timeout",
+                f"the query ran past this connection's bound of {conn.timeout_ms} ms and was "
+                "cancelled on the server",
+            ) from None
         except psycopg.Error as exc:
             error = _server_error(exc)
             raise session.refuse(error.rule, error.detail) from None

@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 import psycopg
+from psycopg.types.string import TextLoader
 
 from cerberus.config import Connection
 from cerberus.custody import driver_credentials
@@ -41,15 +42,31 @@ def open_connection(conn: Connection) -> psycopg.Connection:
         "port": conn.port,
         "dbname": conn.dbname,
         "user": conn.user,
+        "client_encoding": conn.client_encoding,
         **_NEUTRAL,
         **driver_credentials(conn),
     }
     try:
-        return psycopg.connect(**params, autocommit=True)
+        db = psycopg.connect(**params, autocommit=True)
     except psycopg.OperationalError as exc:
         text = str(exc).strip()
         first_line = text.splitlines()[0] if text else type(exc).__name__
         raise Refusal("connection.failed", f"connection {conn.name!r}: {first_line}") from None
+    # psycopg's JSON loader decodes as UTF-8 whatever the client encoding is; load JSON as text,
+    # which is decoded in the connection's encoding.
+    for json_type in ("json", "jsonb"):
+        db.adapters.register_loader(json_type, TextLoader)
+    return db
+
+
+def apply_bounds_and_preconditions(db: psycopg.Connection, conn: Connection) -> None:
+    """Inside the open transaction: the server-side time bound, and the declared search path."""
+    db.execute("SELECT pg_catalog.set_config('statement_timeout', %s, true)", (f"{conn.timeout_ms}ms",))
+    db.execute("SELECT pg_catalog.set_config('lock_timeout', %s, true)", (f"{conn.timeout_ms}ms",))
+    if conn.search_path is not None:
+        quoted = [db.execute("SELECT pg_catalog.quote_ident(%s)", (s,)).fetchone()[0]
+                  for s in conn.search_path]
+        db.execute("SELECT pg_catalog.set_config('search_path', %s, true)", (", ".join(quoted),))
 
 
 def establish_guarantee(db: psycopg.Connection) -> dict[str, str]:
@@ -75,6 +92,7 @@ class ReadSession:
         self.db = open_connection(self.conn)
         try:
             self.db.execute("BEGIN TRANSACTION READ ONLY")
+            apply_bounds_and_preconditions(self.db, self.conn)
             self.guarantee = establish_guarantee(self.db)
             established = _STRENGTH.get(self.guarantee["class"], 0)
             declared = _STRENGTH.get(self.conn.cls, 0)
