@@ -207,8 +207,8 @@ MOVES = {
     "update-from-join": "UPDATE app.other o SET secret = v.secret FROM app.vault v WHERE v.id = o.id;\n"
                         "SELECT secret FROM app.other;",
     "create-view": "CREATE VIEW app.vcopy AS SELECT secret AS s FROM app.vault;",
-    "on-conflict-excluded": "INSERT INTO app.vault VALUES (1, 'x', 'y') ON CONFLICT (id) DO UPDATE "
-                            "SET label = EXCLUDED.secret;",
+    "on-conflict-reads-stored": "INSERT INTO app.vault VALUES (1, 'x', 'y') ON CONFLICT (id) DO UPDATE "
+                                "SET label = vault.secret;",
 }
 
 
@@ -221,3 +221,38 @@ def test_v11_writing_a_restricted_column_still_passes(writable) -> None:
     result = run_script(writable, "UPDATE app.vault SET secret = 'rewritten' WHERE id = 1;\n"
                                   "INSERT INTO app.vault (id, label, secret) VALUES (5, 'five', 'new');")
     assert [s["command"] for s in result["statements"]] == ["UPDATE 1", "INSERT 0 1"]
+
+
+def test_v11_an_upsert_that_writes_its_own_value_passes(writable) -> None:
+    result = run_script(writable, "INSERT INTO app.vault (id, label, secret) VALUES (1, 'x', 'mine') "
+                                  "ON CONFLICT (id) DO UPDATE SET secret = EXCLUDED.secret, label = EXCLUDED.label;")
+    assert result["statements"][0]["command"] == "INSERT 0 1"
+
+
+# --- B9: a column rename on a flagged table; B10: code a script defines -----------------------------
+
+RENAME_AND_CODE = {
+    "rename-swap": ("ALTER TABLE app.vault RENAME COLUMN label TO label_old;\n"
+                    "ALTER TABLE app.vault RENAME COLUMN secret TO label;\nSELECT label FROM app.vault;",
+                    "policy.rename-column"),
+    "rename-restricted-column": ("ALTER TABLE vault RENAME COLUMN secret TO s2;", "policy.rename-column"),
+    "trigger-copy": ("CREATE FUNCTION app.t_copy() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN "
+                     "NEW.label := NEW.secret; RETURN NEW; END $f$;\n"
+                     "CREATE TRIGGER t_copy BEFORE UPDATE ON app.vault FOR EACH ROW EXECUTE FUNCTION app.t_copy();\n"
+                     "UPDATE app.vault SET id = id;\nSELECT label FROM app.vault;",
+                     "script.statement-not-allowed"),
+    "procedure": ("CREATE PROCEDURE app.p() LANGUAGE sql AS $$ UPDATE app.vault SET label = secret $$;",
+                  "script.statement-not-allowed"),
+    "rule": ("CREATE RULE r AS ON UPDATE TO app.other DO ALSO NOTIFY c;", "script.statement-not-allowed"),
+}
+
+
+@pytest.mark.parametrize("form", list(RENAME_AND_CODE))
+def test_b9_b10_renames_on_flagged_tables_and_script_defined_code_are_refused(writable, form: str) -> None:
+    script, rule = RENAME_AND_CODE[form]
+    assert refused(run_script, writable, script).rule == rule
+
+
+def test_b9_renaming_a_column_of_an_unflagged_table_passes(writable) -> None:
+    result = run_script(writable, "ALTER TABLE app.other RENAME COLUMN secret TO note;")
+    assert result["statements"][0]["command"] == "ALTER TABLE"

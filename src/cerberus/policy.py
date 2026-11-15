@@ -73,6 +73,7 @@ class _Refs(Visitor):
         self.column_refs: list[tuple] = []
         self.natural_or_using: list[ast.JoinExpr] = []
         self.aliased_joins: list[ast.JoinExpr] = []
+        self.excluded_refs: set[int] = set()
 
     def visit_RangeVar(self, ancestors, node: ast.RangeVar) -> None:
         alias = node.alias.aliasname if node.alias else None
@@ -81,7 +82,19 @@ class _Refs(Visitor):
         self.range_nodes.append(node)
 
     def visit_ColumnRef(self, ancestors, node: ast.ColumnRef) -> None:
-        self.column_refs.append(tuple(node.fields))
+        if id(node) not in self.excluded_refs:
+            self.column_refs.append(tuple(node.fields))
+
+    def visit_OnConflictClause(self, ancestors, node: ast.OnConflictClause) -> None:
+        # EXCLUDED.<col> is the row the statement itself proposes, not a stored value: reading it
+        # moves nothing out of a restricted column.
+        class _Excluded(Visitor):
+            def visit_ColumnRef(inner, a, ref):
+                f = ref.fields
+                if len(f) == 2 and isinstance(f[0], ast.String) and f[0].sval == "excluded":
+                    self.excluded_refs.add(id(ref))
+
+        _Excluded()(node)
 
     def visit_JoinExpr(self, ancestors, node: ast.JoinExpr) -> None:
         if node.isNatural or node.usingClause:
@@ -172,6 +185,12 @@ class SurfaceCheck:
             self.flag_of[row[0]] = key
             for (child,) in self.lookup(_DESCENDANTS, (row[0],)):
                 self.flag_of.setdefault(child, key)
+
+    def policy_key_of(self, node: ast.RangeVar) -> str | None:
+        """The policy key that flags the relation ``node`` names, or None."""
+        alias = node.alias.aliasname if node.alias else None
+        rel = self._resolve(NamedRef(node.schemaname, node.relname, alias, False))
+        return self.flag_of.get(rel.oid) if rel is not None else None
 
     # -- step 6 ------------------------------------------------------------------------------------
 

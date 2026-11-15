@@ -3,11 +3,12 @@
 The whole script is checked before connecting: no transaction control (``SAVEPOINT`` and ``ROLLBACK TO``
 excepted), nothing a rollback does not undo or that cannot run inside a transaction, no denylisted
 function, no client meta-command, and no statement that escapes the checks (``PREPARE``/``EXECUTE``,
-``DECLARE``/``FETCH``, ``COPY … TO``, ``DO``, ``SET``/``RESET``/``SET ROLE``, ``LOAD``). The statements then
+``DECLARE``/``FETCH``, ``COPY … TO``, ``DO``, ``CREATE FUNCTION/PROCEDURE/TRIGGER/RULE``,
+``SET``/``RESET``/``SET ROLE``, ``LOAD``; and a column rename on a flagged table). The statements then
 run in one explicit transaction, each under the connection's bound, encoding and search path and the
-function rule; a statement that returns rows passes the read-surface policy first, and one that returns
-rows the policy did not check (other than ``SHOW`` and ``EXPLAIN``) stops the script. A server error shows
-its SQLSTATE and condition name, not its message, unless verbose. The transaction is always rolled back,
+function rule and the read-surface policy (no expression may read a restricted column; Spec v1.1).
+A statement that returns rows the policy did not check (other than ``SHOW`` and ``EXPLAIN``) stops the
+script. A server error shows its SQLSTATE and condition name, not its message, unless verbose. The transaction is always rolled back,
 unless a person confirms a commit for this one run on an interactive terminal.
 """
 
@@ -24,7 +25,7 @@ from typing import Callable
 import pglast
 import psycopg
 from pglast import ast
-from pglast.enums import TransactionStmtKind
+from pglast.enums import ObjectType, TransactionStmtKind
 from pglast.visitors import Visitor
 
 from cerberus import gate
@@ -43,6 +44,10 @@ _REFUSED_KINDS = {
     ast.DeclareCursorStmt: "a cursor returns rows the read-surface policy does not see",
     ast.FetchStmt: "a cursor returns rows the read-surface policy does not see",
     ast.DoStmt: "a DO block's body is code the function rule does not read",
+    ast.CreateFunctionStmt: "a function or procedure body is code the checks do not read",
+    ast.CreateTrigStmt: "a trigger runs code no statement of the script names",
+    ast.RuleStmt: "a rule rewrites statements the checks have already passed",
+    ast.CreateEventTrigStmt: "an event trigger runs code no statement of the script names",
     ast.VariableSetStmt: "SET / RESET would override the connection's bound, search path or role",
     ast.LoadStmt: "LOAD loads a library into the server process",
 }
@@ -192,7 +197,15 @@ def run_script(conn: Connection, script: str, *, commit: bool = False,
                 # Every statement, not only those returning rows: no expression may read a restricted
                 # column, so no value moves to a readable place (Spec v1.1). Writing one, as a SET or
                 # INSERT target, is not a column reference and passes.
-                SurfaceCheck(conn, lookup).check(parsed, plan=isinstance(stmt.tree, _EXPLAINABLE))
+                surface = SurfaceCheck(conn, lookup)
+                if (isinstance(stmt.tree, ast.RenameStmt)
+                        and stmt.tree.renameType == ObjectType.OBJECT_COLUMN
+                        and stmt.tree.relation is not None
+                        and (key := surface.policy_key_of(stmt.tree.relation))):
+                    raise Refusal("policy.rename-column",
+                                  f"renaming a column of {key} would move a restricted value under a "
+                                  "listed name; the policy lists columns by name")
+                surface.check(parsed, plan=isinstance(stmt.tree, _EXPLAINABLE))
                 cursor = session.execute(stmt.text)
             except Refusal as refusal:
                 raise Refusal(refusal.rule, f"statement {stmt.index}: {refusal.detail}; the script "
