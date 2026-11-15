@@ -1,0 +1,220 @@
+# AGENTS.md — cerberus
+
+## What cerberus is
+
+**cerberus** is a small Python CLI that sits between AI agents and confidential PostgreSQL databases. It
+is the only holder of the database credentials and the only path an agent's SQL takes to a declared
+connection: reads run in a read-only transaction with a stated write guarantee, a column-level read
+policy and a server-side time bound; scripts on a writable test database run only inside a transaction
+that is rolled back. The contract is `specs/sensitive-database-source.spec.md`; the problem and
+requirements live in fppfurtado/iris (`briefs/`, `prds/`, item iris#34).
+
+## Language
+
+Project language is **English** — code, comments, CLI help, docs and commit messages.
+
+## Instance data never enters this repository
+
+No host, database, schema, table or column name of a real instance appears in code, tests, fixtures,
+docs or commit messages. Tests run against the synthetic primary and standby the fixture starts
+(`tests/conftest.py`). The connection declarations live only in `~/.config/cerberus/`.
+
+
+<!-- agent-kit operational-floor v19 — single source: agent-kit/onboarding/operational-floor.md
+     Copy this whole block into your repo's own AGENTS.md / CLAUDE.md, below your own content.
+     Extend BELOW the closing marker; never edit INSIDE the block. Re-copy when the version bumps.
+     This block is a SHIPPED ASSET: it stays English-as-shipped regardless of your repo's `## Language`
+     `project` setting — re-copy verbatim, never translate it (localizing a shipped asset is separate
+     product-i18n, not authored content). Your own below-marker sections follow your `project` normally.
+     Distillation baseline — last verified faithful against the maintainer's root operational-floor
+     section on 2026-07-17. v2 (2026-07-20) adds the `.worktrees/<slug>` worktree-location convention to
+     the Session isolation rung, aligning it with the maintainer root floor (#338). v3 (2026-07-24)
+     adds apply-`.worktreeinclude` (copy, not symlink) after every worktree create (#431). v4 (2026-07-28)
+     adds `git submodule update --init` after worktree create for repos with a `.gitmodules` (#492).
+     v5 (2026-08-03) adds the canonical-path-bound-tooling carve-out to the Session isolation rung (branch
+     in-place where the tool reads a configured canonical path, e.g. a chezmoi source dir; #606). v6
+     (2026-08-05) generalizes the Cycle-close capture sweep from "before landing" to the close of ANY
+     session — a landing-free analysis/hygiene pass owes a disposition for each gap it surfaces too (#635).
+     v7 (2026-08-10) sharpens the Cycle-close capture sweep from spirit to a checkable step: disposition is
+     per-item to a durable surface (an aggregate "all handled" and a chat/close-summary/un-attested-prose
+     mention are not durable), so an odd-class follow-up cannot slip through bulk reasoning (#708). v8
+     (2026-08-16) adds the governing-Spec scan sub-step to the Declare-the-route rung: before a skip-Spec
+     lightweight route commits, scan for an existing frozen Spec governing the touched files (#781). v9
+     (2026-08-16) gives the Cycle-close capture sweep its during-flow FEED — the session findings ledger,
+     appended at detection so process-class findings survive to close (#863) — and aligns the spec-file
+     pattern list to the tools' full set (adds `spec_*.md`). v10 (2026-08-17) extends the
+     Verify-before-destructive rung with the repo-archive case — verify `HEAD == @{u}` + a clean tree
+     before archiving a repo that serves as a delete-backstop (#852; evidence mneme#194). v11
+     (2026-08-17) adds the teardown half to the Session isolation rung: sweep gitignored working state
+     out of a session worktree BEFORE removal — a bare `git worktree remove` silently deletes it (#840;
+     evidence #798, n=3). v12 (2026-08-18) adds the Stage-by-explicit-paths rung: stage changed paths by
+     name, never a broad `git add -A`/`add .`, so a stale worktree copy cannot silently revert a sibling
+     session's landed work (#888). v13 (2026-09-01) adds the liveness half to the Concurrency-check rung: a
+     foreign `.worktrees/<slug>` is presumed live until a positive death signal, and a positive liveness
+     probe (`lsof +D` / `/proc/*/cwd`) precedes any destructive action on it — landing-absence (unpushed/no
+     PR) is in-progress work, not death (#1210). v14 (2026-09-04) adds the Prod-data-mutation rung:
+     mutating production data outside a modeled event type forces a same-cycle disposition of the state's
+     classification AND a sweep of the surfaces that render it (agent-kit#1256; evidence expedidor #296/#299
+     + pje scripts-judiciais). This rung is ADOPTER-FACING and inverts the distillation direction of every
+     other rung — it has NO maintainer root-floor counterpart, because the maintainer repo has no production
+     data (the rung would never fire here); it originates in this block for the repos-with-prod-data that
+     vendor it. So the faithfulness baseline does not apply to it (there is nothing upstream to be faithful to).
+     v15 (2026-09-15) adds a bare `spec.md` and the default `specs/` home to the hand-scan spec-file list of
+     the Declare-the-route rung, matching what the tools resolve (agent-kit#1100, #1106).
+     v16 (2026-09-27) adds the agent harness's own memory/notes store to the Cycle-close capture sweep's
+     NOT-durable list. It is the hardest of that list to see: unlike chat or an ephemeral summary it
+     genuinely persists and may load automatically, which is exactly why it reads as a disposition — but it
+     is harness-private, so no repo-side check, audit, sweep or other harness can see what it holds
+     (wording corrected at v18 — that capability premise was falsified; agent-kit#2209; evidence: 190
+     records accumulated in one such store, 86% of them transferable method, with only 18% of the method
+     ones citing any repo home).
+     v17 (2026-10-13) makes FIXED expressible in the Cycle-close capture sweep: a finding fixed in-flow is
+     no longer excluded from the ledger but recorded as fixed, naming the fix, and "fixed in this cycle" joins
+     the durable dispositions — before, the only named outcomes were a filed item or a reason it needs none,
+     so a fixed finding read like nothing surfaced or got filed to have something to write. An open cure or
+     an unverified change to an agent instruction is never "fixed" (agent-kit#2316, arc #1851).
+     v18 (2026-10-25) gives the Cycle-close capture sweep's harness-store sentence its promotion route: a
+     finding that is a rule or a method is written to its durable home in the cycle that finds it (that
+     write is its "fixed" disposition, so the never-fixed cases still bind), the store keeping
+     a pointer, never the only copy (before, the block said where a finding must not live and not
+     how it reaches a home; agent-kit#2183 decision 0050, #2950). The same sentence's ground changes from a
+     capability claim ("no repo-side check can see it") — which this repo's own committed script falsifies
+     — to the true one: the store is unversioned and absent from any diff or review (#2342).
+     v19 (2026-10-29) gives the Cycle-close capture sweep one clause: a break — code the change lands that
+     fails — is disposed by its land-gate record, never by a filed item alone (agent-kit#2973, Spec
+     spec-assumptions-at-build v3 D13).
+     This generic block intentionally omits the maintainer-internal
+     release/attestation rungs (a per-PR method self-check, issue-close-evidence, the PR attestation
+     lines, and release-due surfacing for published units) — they depend on maintainer-specific tooling
+     a norm-blind repo does not have. Re-verify when that floor section changes; the version bumps only
+     when a *copied rung* changes (so an unchanged re-copy is never forced). -->
+
+## Working norm (operational floor)
+
+This repo follows the **throughline** working discipline. The rungs below are the always-on floor: they
+bind every session that mutates git — from a one-line fix to a large build — and are **not** scaled down by
+effort size (a smaller effort takes fewer steps, never a thinner floor). They run as **self-checks**; where
+a deterministic guard is installed (see the last rung) it enforces the same rung, but the behavior binds
+with or without it.
+
+- **Session isolation.** <!-- rung:session-isolation --> Work in a dedicated git worktree — created **under `.worktrees/<slug>` inside the
+  repo** (a gitignored directory), on a feature branch — from session start, solo included. The
+  main/default worktree stays a neutral base: no session does feature work on it. Never run two
+  git-mutating sessions against one working tree. If you start and find the base on another session's
+  branch (or dirty with foreign work), spawn your own worktree — do not work there. After
+  `git worktree add`, if the repo root has a `.worktreeinclude`, **copy** each listed path from the main
+  worktree into the new one (copy, not symlink; halt if a listed path is missing in main) — gitignored
+  agent context (`AGENTS.md`, `CLAUDE.md`, …) does not travel with the worktree otherwise. If the repo has
+  a `.gitmodules`, also run `git submodule update --init --recursive` in the new worktree — submodules are
+  **versioned** (a gitlink to a pinned commit) that `git worktree add` does **not** init, so a build that
+  depends on them fails otherwise; **init, don't copy** (they are not `.worktreeinclude` entries).
+  **Teardown is sweep-then-remove:** before removing a session worktree, sweep its gitignored working
+  state OUT to the main tree — `git worktree remove` refuses on tracked modifications but **silently
+  deletes gitignored files** (the in-worktree `.throughline/dossiers/`, plus any path a tracked
+  `.worktreesweep` manifest at the repo root lists). A throughline install ships the sweep
+  (`python3 sub-tools/worktree_sweep.py --repo <main-root> --worktree <worktree-path>`); without it,
+  copy those paths out by hand before `git worktree remove`.
+  **Carve-out — canonical-path-bound tooling:** for a repo whose tooling reads a *configured canonical
+  absolute path* rather than the working tree (e.g. a chezmoi source dir), a `.worktrees/<slug>` worktree
+  relocates edits where the tool never looks (no isolation, actively misleading) — **branch in-place** in
+  the canonical dir instead; PR-per-cycle + the concurrency check still bind (guard the concurrency check —
+  a bare pull/checkout on the shared dir can collide).
+- **Stage by explicit paths.** <!-- rung:stage-by-explicit-paths --> Stage what you changed by naming the paths (`git add <path> …`) — never a
+  broad `git add -A` / `git add .`. A broad add re-stages whatever the worktree's index happens to hold, so
+  in a parallel-session repo a stale copy of a file a *sibling* session already landed gets silently
+  re-committed at its old contents — reverting that sibling's work, with no merge conflict to warn you.
+  Review `git status` / `git diff --cached` before committing; stage additions and deletions explicitly.
+- **Concurrency check at pickup.** <!-- rung:concurrency-check-at-pickup --> Before working an existing tracker item, check whether a live session
+  already owns it (a sibling worktree/branch for it, or a frozen design / open PR on the item). If one
+  exists, stand down — do not produce competing artifacts; defer or coordinate. A foreign `.worktrees/<slug>`
+  is **presumed live until a positive death signal** (operator confirmation · the branch already
+  merged/closed · an explicit end marker) — landing-absence (unpushed · no PR · no comment) is in-progress
+  work, not death. Before any destructive action on it (worktree remove · teardown-sweep · rebase-onto), run
+  a positive liveness probe (`lsof +D <worktree>`, or scan `/proc/*/cwd` for a process cwd'd inside — a
+  parallel session's command line carries no slug, so a slug grep of `ps` misses it) and read git mtimes
+  against the real wall clock, rather than reading landing-absence as death.
+- **Issue-first.** <!-- rung:issue-first --> A significant effort — one worth framing, or expected to outlive a session — opens its
+  tracker item BEFORE work begins, so the effort is visible from the start and survives a dead session.
+- **Declare the route before solution mechanics.** <!-- rung:declare-the-route-before-solution-mechanics --> For each item you pick up, name the route on two axes —
+  problem space (frame the problem, vs work from an already-frozen problem brief) and solution space
+  (a lightweight build, vs a full design pipeline) — each with a one-line reason, *before* touching the
+  solution. A trivial fix names its door too; "worked ad-hoc, through no door" is never a valid route.
+  Before committing a "lightweight build, skip Spec" route, check whether an existing frozen Spec already
+  governs the code the change touches — a throughline install ships the deterministic scan
+  (`spec_surface.py match --repo . --paths <touched files>`); without it, scan the repo's spec files
+  (`spec-*.md` / `spec_*.md` / `*.spec.md` / a bare `spec.md` / any `.md` under `specs/`) by hand. One found → the route defaults to *amend that Spec*, not skip it.
+- **PR-per-cycle; the agent never merges.** <!-- rung:pr-per-cycle-the-agent-never-merges --> Every cycle lands via a pull/merge request off the feature
+  branch — never a direct push to the default branch. The agent stops at a merge-ready PR (checks green,
+  review attested) and hands off; the **human performs the merge** (the terminal, least-reversible step).
+- **Review before land (the land-gate).** <!-- rung:review-before-land-the-land-gate --> Built code lands on the default branch only after the judgment
+  review pass ran — attested — or a reasoned waiver is on record. The bar is *ran-or-waived*, not
+  findings-resolved: acting on findings stays human judgment; the gate only ensures review was not silently
+  skipped.
+- **Cycle-close capture sweep.** <!-- rung:cycle-close-capture-sweep --> An error, gap, drift, or optimization candidate detected MID-flow
+  appends ONE line, at detection, to the session findings ledger — `.throughline/dossiers/session-findings-<slug>.md`
+  in the working worktree (a worktree-less or in-place session → the same path at the repo root):
+  create the directory if absent and keep it gitignored (a
+  `.throughline/.gitignore` carrying `/dossiers/`); it is a CONVENTION, not a tool dependency — with no
+  throughline install, any gitignored session-notes file serves the same role. A line is owed when the
+  finding is not already tracked and outlives the session or names a class — one you fixed in-flow too,
+  marked fixed with the fix named — so the close sweep reads a FILE, never working memory. Before removing the
+  session worktree, sweep the ledger's lines to their dispositions (or copy the file out) — a bare
+  worktree removal deletes it. At the close of ANY session — a landing cycle OR a
+  landing-free analysis/review/hygiene pass that lands nothing — sweep the ledger PLUS any follow-ups, drifts, and gaps recalled at close (the ledger augments the
+  sweep's feed, it never bars a late entry) and
+  dispose each **per item, to a durable surface**: enumerate each surfaced follow-up (an odd-class one — a
+  one-off "run `X`" mechanical step — counts too) and name where it durably lands (fixed in this cycle,
+  naming the fix; a filed tracker item; or a recorded reason it needs none), never swallowed — whether or
+  not the session lands. A **break** (code the change lands that fails) is disposed by its land-gate record
+  (`land_gate.py breaks` in a throughline install), never by a filed item alone. Two things are never "fixed": a finding whose fix is still an open choice, and a
+  change to how an agent judges (a prompt, skill, or instruction edit) not yet verified to behave as
+  intended — file those. Fixing one instance of a wider class is fixed AND filed for the class. An **aggregate** "all
+  handled" and a mention in **chat, an ephemeral close summary, or un-attested prose** are NOT durable
+  dispositions: reasoning over the class lets an odd-class item slip and land nowhere. **Nor does your
+  agent harness's own memory/notes store suffice** — it is the hardest of these to see, because unlike the
+  others it genuinely persists and may be loaded automatically, which is exactly why it reads as a
+  disposition. It lives outside the repo — unversioned, absent from any diff or review — so a finding
+  disposed only there discharges nothing this floor can verify. Write it there as **well** if your harness
+  offers one; it does not stand **instead** of a durable surface. **A finding that is a rule or a method —
+  not a fact about this repo's own state — is written to its durable home in the cycle that finds it** (a
+  doc or guideline in this repo, or a section you add below this block's closing marker); that write is its
+  "fixed in this cycle" disposition (so the two never-fixed cases above still bind), and the store entry
+  for it is a pointer to that home, never the only copy, because promoting it later is a step nobody
+  schedules. A landing cycle records each where the change lands; a landing-free pass writes no home — it
+  files the finding, or records it in the pass's own output.
+- **Verify before any destructive action.** <!-- rung:verify-before-any-destructive-action --> Before `rm` / overwrite / `clean`, verify the target against
+  the real tree (tracked-files / status / an explicit path check) — never a bare directory listing, which
+  goes stale across branch churn. Before `git stash pop`/`apply`/`drop`, check `git stash list` and target
+  an explicit `stash@{n}` (the stash stack is shared across all worktrees, so a bare pop may apply an alien
+  stash onto the wrong tree); prefer read-only inspection when you only need to look. Same class —
+  archiving a repo that serves as a delete-backstop (`gh repo archive` / forge Settings → Archive):
+  archiving freezes the remote history read-only — verify `HEAD == @{u}` and a clean tree (nothing
+  load-bearing untracked or uncommitted) BEFORE archiving, else the backstop freezes incomplete history
+  and "delete-because-backed-up" stops being true.
+- **Prod-data mutation — classify + sweep render surfaces.** <!-- rung:prod-data-mutation-classify-sweep-render-surfaces --> Same high-blast-radius
+  class as the rung above, distinct obligation. The moment a session mutates PRODUCTION data outside a
+  modeled event type — a reconciliation, a backfill, a mass correction, any raw surgery against the store
+  instead of the domain's modeled flow (additive inserts AND overwriting corrections alike) — surface it IN
+  THE SAME CYCLE, before the effects reach any rendering surface, for conscious disposition of TWO coupled
+  outputs: (a) the **classification/mark** of the mutated state — what modeled kind of event is this, or is
+  it explicitly synthetic? (a fictional submitter / non-domain origin is the tell it is unmodeled) — and
+  (b) a **render-surface sweep** — enumerate EVERY projection / feed / ledger / report that renders this data
+  and how the mutation appears in each; a surface with no class distinguishing a data-adjustment from an
+  organic operation is a leak to flag NOW, not after it ships. NEVER auto-classify or auto-suppress (surface
+  for conscious disposition); fire ONLY on a genuine prod-data mutation outside a modeled type — not on an
+  ordinary modeled write through the domain flow, nor in a repo with no production data — else the reflex is
+  noise.
+
+**The methodology.** The full working cycle is **throughline** — one guided front door (**frame** the
+problem) → solution design → **build** → **review** — available as installed agent skills. Bring a problem
+to `frame`; it routes the rest. Diagnosis has its own depth branch (`debug`). Do not reach for a solution
+before the problem is framed.
+
+**Deterministic enforcement (optional; the floor degrades gracefully).** The rungs above are self-checks and
+bind everywhere. Where you want a *hard* floor, add the deterministic layers separately: a pre-commit guard
+that refuses commits on the default branch, a pre-push / CI land-gate that blocks unreviewed
+throughline-built code (use the land-gate CI recipe your throughline install ships), and your forge's branch
+protection. These are per-harness / per-platform add-ons, not a dependency of the norm — where they are
+absent, the self-checks still bind.
+
+<!-- /agent-kit operational-floor v19 -->

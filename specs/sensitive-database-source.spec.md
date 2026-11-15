@@ -1,7 +1,7 @@
 # Spec: cerberus — the outside-iris carrier for sensitive database sources (first build)
 
 - Frozen at: 2026-11-15
-- Spec version: v1
+- Spec version: v1.1
 - Source: PRD `sensitive-database-source` v4 (frozen 2026-11-15; v4 adds this carrier to the candidate
   list and changes nothing else; lives in the iris repository,
   `prds/sensitive-database-source.PRD.md`), projected from Brief `sensitive-database-source` v3 (same
@@ -15,7 +15,18 @@
   the PRD; W1/W2/W5 moved to the gate task; deploy split from replay; two over-stated measurements
   corrected. Conformance clean. The fixes were not re-read (one read, no re-pass): the read-surface rule as
   a whole first runs in SP-T3 and SP-T5. Validated text: no record
-- Amendments: none
+- Amendments: v1 → v1.1 (2026-11-15), from the build's review (fppfurtado/cerberus#2). (1) Rollback-only
+  scripts: no expression of any statement may read a non-listed column of a flagged table (a statement may
+  still write one, as a `SET` or `INSERT` target); v1 checked only statements that return rows, and a
+  `CREATE TABLE … AS SELECT <restricted>` followed by a read of the copy returned the value in one script
+  (measured on the fixture); reshaping a flagged relation (a column rename, a detached partition, dropped
+  inheritance) and code the script defines (functions, procedures, triggers, rules) are refused for the same
+  reason (each measured to move the value). The
+  residual in Deliberate exclusions narrows accordingly and joins the M5 list. (2) Cross-cutting,
+  errors: in scripts a server error shows its SQLSTATE and condition name only; v1's "SQLSTATE and first line"
+  quoted a restricted value (`UPDATE … SET id = secret::int`, measured). Approval: the operator delegated the
+  decision ("Delego as três decisões", 2026-11-15); decided by the agent with the reasoning stated in the
+  session and in `decisions/0001` D11–D12.
 - Branch taken (PRD v3 "Branches on J5 test 1"): test 1 ended without an answering verdict (attempt 1
   INCONCLUSIVE, attempt 2 HELD, attempt 3 designed and not funded; iris#34 comment of 2026-11-13) and no
   further test-1 budget is recorded, so the first build (PR1–PR6, PR8a, PR9–PR11, PR13) is entirely outside
@@ -184,10 +195,16 @@ timestamp, connection, script SHA-256, statement count.
   procedure that commits internally fails inside the explicit transaction (`invalid transaction
   termination`) and leaves no row. The script path carries the same guards as the read path where they
   apply: the connection's encoding and search path; the time bound on every statement; the function rule on
-  every statement; and, for every statement that returns rows (a `SELECT`, or a data-modifying statement
-  with `RETURNING`), steps 6–7 of the read path — a row-returning statement that reaches a flagged relation
-  outside the policy is refused and the script stops (rolled back). A data-modifying statement with no
-  returned rows may touch a flagged table: it returns only a command tag. `--commit` replaces the final `ROLLBACK` with `COMMIT` only after a
+  every statement; and steps 6–7 of the read path on every statement that names a flagged relation (the
+  plan source where the statement can be explained) — a statement in which any expression reads a
+  non-listed column, or that returns rows reaching a flagged relation outside the policy, is refused and the
+  script stops (rolled back). A statement may write a restricted column (as a `SET` or `INSERT` target, or
+  from the statement's own proposed row, `EXCLUDED.<column>`): what it may not do is read a stored one. For
+  the same reason a script may not reshape a flagged relation — no `ALTER TABLE`, rename or `SET SCHEMA`
+  naming one, which covers renaming its columns (the policy lists columns by name) and detaching a
+  partition or dropping inheritance (the policy flags children through the tree) — and may not define code
+  the checks do not read (`CREATE FUNCTION`/`PROCEDURE`/`TRIGGER`/`RULE`/`EVENT TRIGGER`, `DO`), so no value
+  moves to a readable place (v1.1). `--commit` replaces the final `ROLLBACK` with `COMMIT` only after a
   confirmation typed on an interactive terminal (the connection name); with no terminal on stdin it is
   refused. An agent's shell has no terminal, so the operator runs a commit himself.
 - **Hook (PR9).** `cerberus hook claude-code` reads the harness's pre-tool event. For a shell command it
@@ -265,13 +282,17 @@ timestamp, connection, script SHA-256, statement count.
   Tests run against a synthetic database started by the test fixture. The private identifier list stays
   outside the repository; the M3 grep is an operator-present task.
 - **Errors never echo data.** A refusal or a database error returns the rule and the server's error class,
-  never a row value; a server error message that quotes a value is truncated to its SQLSTATE and first line
-  unless `--verbose-errors` is passed.
+  never a row value. On the read path a server error is truncated to its SQLSTATE and first line (a query
+  there that names a non-listed column is refused before it runs); in a script, where a statement may write
+  a restricted column, it shows its SQLSTATE and condition name only (v1.1). `--verbose-errors` shows the
+  full text.
 - **Residual risks stated to the operator at M5 (PRD R1).** No server-side backstop exists for PR4. Known
   residuals of this design: a built-in function that this Spec's denylist misses; a relation reached only
   through a path none of the three sources shows (for example a function inside an allowlisted function); an implicit cast or a
   user-defined type's output function; side channels through timing or error text; sequence values consumed
-  by a rolled-back script. The custody level is "not reachable by accident": an agent that deliberately
+  by a rolled-back script; on a `writable` connection, code a script's statements do not name — a trigger
+  or rule already defined in the database, or an allowlisted function's body — moving a value into a
+  readable column (v1.1). The custody level is "not reachable by accident": an agent that deliberately
   reads the credential file or disables the hook is outside this build's threat model (PRD Assumptions).
 
 ### Durable invariants
@@ -352,7 +373,10 @@ timestamp, connection, script SHA-256, statement count.
   embedded verification SELECT runs on a `writable` connection, the system SHALL return each statement's
   output and leave no committed change" (integration: a read before and after is equal); "WHEN a statement
   of the script returns rows (a `SELECT` or a `RETURNING` clause) that reach a flagged relation outside the
-  policy, the system SHALL refuse it, return no value of it and roll back"; "the system SHALL apply the
+  policy, the system SHALL refuse it, return no value of it and roll back"; "IF any expression of a script
+  statement reads a non-listed column of a flagged table (a `CREATE TABLE … AS`, an `INSERT … SELECT`, an
+  `UPDATE … SET <listed> = <non-listed>`), THEN the system SHALL refuse it and roll back, while a statement
+  that only writes the restricted column passes" (v1.1); "the system SHALL apply the
   connection's time bound, encoding and search path to every statement of the script" (integration: a
   statement past the bound is cancelled and the script rolled back); "IF the script
   contains a transaction-control statement, a statement a rollback does not undo, a denylisted function or a
@@ -435,8 +459,10 @@ Trigger-source: fppfurtado/iris#73 · the case-study harness memory or session j
   credential catalog relation, is refused even when it touches no flagged object. Why: PRD R1's own
   mitigation (an allowlist of functions) and the measured leak through a database function and through
   SQL-as-text functions; without it PR4's last form cannot hold.
-- The read-surface policy on a `writable` connection covers the rows a script returns, not what a
-  data-modifying statement moves between columns inside the database — a residual stated at M5.
+- The read-surface policy on a `writable` connection covers every expression a script's statements read
+  (v1.1). What remains outside it — a residual stated at M5 — is code the statements do not name: a trigger
+  or rule already defined in the database, and the body of an allowlisted function, either of which may move
+  a value into a readable column.
 - PRD R7 "adds a second repository to the effort" — WIDER here, declared: the code lives in `cerberus`, and
   deployment (SP-T10) lands small changes in the operator's dotfiles and loadout repositories and re-points
   one credential file in a work repository.
