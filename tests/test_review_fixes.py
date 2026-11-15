@@ -168,10 +168,15 @@ def test_b7_a_script_with_non_ascii_text_runs_the_statements_that_were_checked(w
     assert result["statements"][1]["rows"] == [["first"]]
 
 
-def test_a_server_error_in_a_script_does_not_quote_a_restricted_value(writable) -> None:
-    r = refused(run_script, writable, "UPDATE app.vault SET id = secret::int")
+def test_a_server_error_in_a_script_shows_the_condition_not_the_message(writable) -> None:
+    # Reading a restricted column to force an error is refused by the policy first (Spec v1.1) ...
+    assert refused(run_script, writable, "UPDATE app.vault SET id = secret::int").rule == \
+        "policy.column-not-listed"
+    # ... and an error that does reach the server shows its condition, not its message or detail.
+    r = refused(run_script, writable, "INSERT INTO app.vault (id, label, secret) VALUES (1, 'x', 'y')")
     assert r.rule == "server.error"
-    assert "22P02" in r.detail and "InvalidTextRepresentation" in r.detail
+    assert "23505" in r.detail and "UniqueViolation" in r.detail
+    assert "already exists" not in r.detail and "duplicate key" not in r.detail
 
 
 def test_show_and_explain_rows_still_return_in_a_script(writable) -> None:
@@ -191,3 +196,28 @@ def test_rows_from_a_statement_the_policy_did_not_check_stop_the_script(schema: 
     r = refused(run_script, conn, "CALL app.out_proc(NULL)")
     assert r.rule == "script.unchecked-rows"
     assert "from-a-procedure" not in r.detail
+
+
+# --- Spec v1.1: no script expression may read a restricted column ------------------------------------
+
+MOVES = {
+    "create-table-as": "CREATE TABLE app.copy1 AS SELECT secret AS s FROM app.vault;\nSELECT s FROM app.copy1;",
+    "insert-select": "INSERT INTO app.other SELECT id, secret FROM app.vault;\nSELECT secret FROM app.other;",
+    "update-listed-from-hidden": "UPDATE app.vault SET label = secret;\nSELECT label FROM app.vault;",
+    "update-from-join": "UPDATE app.other o SET secret = v.secret FROM app.vault v WHERE v.id = o.id;\n"
+                        "SELECT secret FROM app.other;",
+    "create-view": "CREATE VIEW app.vcopy AS SELECT secret AS s FROM app.vault;",
+    "on-conflict-excluded": "INSERT INTO app.vault VALUES (1, 'x', 'y') ON CONFLICT (id) DO UPDATE "
+                            "SET label = EXCLUDED.secret;",
+}
+
+
+@pytest.mark.parametrize("form", list(MOVES))
+def test_v11_a_script_statement_may_not_read_a_restricted_column(writable, form: str) -> None:
+    assert refused(run_script, writable, MOVES[form]).rule.startswith("policy.")
+
+
+def test_v11_writing_a_restricted_column_still_passes(writable) -> None:
+    result = run_script(writable, "UPDATE app.vault SET secret = 'rewritten' WHERE id = 1;\n"
+                                  "INSERT INTO app.vault (id, label, secret) VALUES (5, 'five', 'new');")
+    assert [s["command"] for s in result["statements"]] == ["UPDATE 1", "INSERT 0 1"]

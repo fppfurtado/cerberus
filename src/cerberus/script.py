@@ -46,6 +46,9 @@ _REFUSED_KINDS = {
     ast.VariableSetStmt: "SET / RESET would override the connection's bound, search path or role",
     ast.LoadStmt: "LOAD loads a library into the server process",
 }
+# Statements EXPLAIN can take without running them (the plan source of the read-surface check).
+_EXPLAINABLE = (ast.SelectStmt, ast.InsertStmt, ast.UpdateStmt, ast.DeleteStmt, ast.MergeStmt,
+                ast.CreateTableAsStmt)
 # Statements whose rows may be returned without passing the read-surface policy.
 _ROWS_WITHOUT_POLICY = (ast.VariableShowStmt, ast.ExplainStmt)
 
@@ -186,8 +189,10 @@ def run_script(conn: Connection, script: str, *, commit: bool = False,
                 collector(stmt.tree)
                 parsed = gate.ParsedQuery(stmt.text, stmt.tree, collector.functions, collector.operators)
                 gate.check_functions(parsed, lookup, conn.allow_functions)
-                if _returns_rows(stmt.tree):
-                    SurfaceCheck(conn, lookup).check(parsed)
+                # Every statement, not only those returning rows: no expression may read a restricted
+                # column, so no value moves to a readable place (Spec v1.1). Writing one, as a SET or
+                # INSERT target, is not a column reference and passes.
+                SurfaceCheck(conn, lookup).check(parsed, plan=isinstance(stmt.tree, _EXPLAINABLE))
                 cursor = session.execute(stmt.text)
             except Refusal as refusal:
                 raise Refusal(refusal.rule, f"statement {stmt.index}: {refusal.detail}; the script "

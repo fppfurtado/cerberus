@@ -234,7 +234,8 @@ class SurfaceCheck:
 
     # -- steps 6 and 7 -----------------------------------------------------------------------------
 
-    def check(self, parsed: ParsedQuery) -> list[dict[str, str]]:
+    def check(self, parsed: ParsedQuery, *, plan: bool = True) -> list[dict[str, str]]:
+        """Steps 6–7. ``plan=False`` skips the plan source, for a statement EXPLAIN cannot take."""
         refs = _Refs()
         refs(parsed.tree)
 
@@ -277,7 +278,7 @@ class SurfaceCheck:
             self._check_columns(refs, restricted)
 
         # (a) through the plan
-        for schema, name in self._plan_relations(parsed.sql):
+        for schema, name in (self._plan_relations(parsed.sql) if plan else ()):
             row = self._one(_BY_NAME, (schema, name))
             if row is None:
                 continue

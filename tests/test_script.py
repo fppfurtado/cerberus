@@ -85,7 +85,7 @@ def test_returned_rows_reaching_a_restricted_column_are_refused_and_rolled_back(
 
 
 def test_a_data_modifying_statement_without_returned_rows_may_touch_a_flagged_table(writable) -> None:
-    result = run_script(writable, "UPDATE app.vault SET secret = secret WHERE id = 1")
+    result = run_script(writable, "UPDATE app.vault SET secret = 'rewritten' WHERE id = 1")
     assert result["statements"] == [{"statement": 1, "command": "UPDATE 1"}]
 
 
