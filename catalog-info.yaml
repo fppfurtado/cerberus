@@ -1,0 +1,18 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: cerberus
+  description: "Guard between AI agents and confidential PostgreSQL databases: the only holder of the credential and the only path an agent's SQL takes (read-only with a stated guarantee, column policy, server-side time bound, rollback-only scripts)."
+  annotations:
+    constelacao.io/cluster: dev-toolkit
+    constelacao.io/camada: bridge
+    constelacao.io/hub: github:fppfurtado/meta-system
+    # typed outgoing edges (JSON string). cerberus consumes no constellation repo; iris#73 may later
+    # consume cerberus (an incoming edge, declared on that side when built).
+    constelacao.io/edges: |
+      []
+spec:
+  type: cli
+  lifecycle: experimental
+  owner: fppfurtado
+  system: dev-toolkit
