@@ -11,6 +11,7 @@ import sys
 
 from cerberus import config, custody
 from cerberus.read import run_query
+from cerberus.script import run_script
 from cerberus.refusal import Refusal
 
 EXIT_REFUSED = 3
@@ -34,6 +35,21 @@ def _table(result: dict) -> str:
 def _query(args: argparse.Namespace) -> int:
     result = run_query(config.load(args.connection), args.sql, verbose_errors=args.verbose_errors)
     print(_table(result) if args.format == "table" else _json(result))
+    return 0
+
+
+def _confirm_on_terminal(conn: config.Connection) -> bool:
+    print(f"Type the connection name ({conn.name}) to COMMIT this script: ", end="", file=sys.stderr,
+          flush=True)
+    return sys.stdin.readline().strip() == conn.name
+
+
+def _run_script(args: argparse.Namespace) -> int:
+    script = open(args.file, encoding="utf-8").read()
+    confirm = _confirm_on_terminal if args.commit and sys.stdin.isatty() else None
+    result = run_script(config.load(args.connection), script, commit=args.commit, confirm=confirm,
+                        verbose_errors=args.verbose_errors)
+    print(_json(result))
     return 0
 
 
@@ -63,6 +79,17 @@ def main(argv: list[str] | None = None) -> int:
     query.add_argument("--verbose-errors", action="store_true",
                        help="show a server error's full message (it can quote a value)")
     query.set_defaults(run=_query)
+
+    script = commands.add_parser(
+        "run-script", help="run a script on a writable connection inside a transaction rolled back"
+    )
+    script.add_argument("connection")
+    script.add_argument("file")
+    script.add_argument("--commit", action="store_true",
+                        help="commit instead of rolling back, after typing the connection name on a terminal")
+    script.add_argument("--verbose-errors", action="store_true",
+                        help="show a server error's full message (it can quote a value)")
+    script.set_defaults(run=_run_script)
 
     commands.add_parser("connections", help="list declared connections (no secrets)").set_defaults(
         run=_connections

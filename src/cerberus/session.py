@@ -128,3 +128,46 @@ class ReadSession:
     def execute(self, sql: str, params: Any = None) -> psycopg.Cursor:
         assert self.db is not None, "session is not open"
         return self.db.execute(sql, params)
+
+
+class WriteSession:
+    """``with WriteSession(conn) as s:`` — one explicit transaction on a writable connection, rolled back
+    on exit unless ``commit()`` was called. The bound, encoding and search path apply as on reads."""
+
+    def __init__(self, conn: Connection) -> None:
+        if conn.cls != "writable":
+            raise Refusal(
+                "connection.not-writable",
+                f"connection {conn.name!r} is {conn.cls}; run-script needs a writable connection",
+            )
+        self.conn = conn
+        self.db: psycopg.Connection | None = None
+        self._commit = False
+
+    def __enter__(self) -> "WriteSession":
+        self.db = open_connection(self.conn)
+        try:
+            self.db.execute("BEGIN")
+            apply_bounds_and_preconditions(self.db, self.conn)
+        except BaseException:
+            self.db.close()
+            self.db = None
+            raise
+        return self
+
+    def __exit__(self, exc_type, *exc: object) -> None:
+        if self.db is None:
+            return
+        try:
+            if not self.db.closed:
+                self.db.execute("COMMIT" if self._commit and exc_type is None else "ROLLBACK")
+        finally:
+            self.db.close()
+            self.db = None
+
+    def commit_on_exit(self) -> None:
+        self._commit = True
+
+    def execute(self, sql: str, params: Any = None) -> psycopg.Cursor:
+        assert self.db is not None, "session is not open"
+        return self.db.execute(sql, params)
