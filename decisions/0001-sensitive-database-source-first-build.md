@@ -2,7 +2,7 @@
 
 - Date: 2026-11-15
 - Context: the build of `specs/sensitive-database-source.spec.md` (v1, fppfurtado/iris#34), tasks SP-T1 to
-  SP-T9. These are the choices the frozen Spec left open, resolved while building. They bind the code; a Spec
+  SP-T9, and the fixes of its review. These are the choices the frozen Spec left open, resolved while building. They bind the code; a Spec
   amendment may supersede them.
 
 ## D1 — A function or operator with no catalog entry is refused
@@ -61,6 +61,27 @@ denied: its second segment is not cerberus.
 `doctor` prints its report as JSON and exits 0 only when every password file is present, outside a working
 tree and private (no group/other bits), no declared connection is still in `~/.pgpass`, and no
 `~/.pgpass` entry shares a password in custody. Exit 3 stays reserved for refusals.
+
+## D9 — Every named relation is resolved, CTE names included (review fix B1)
+
+CTE scope is per query level; skipping any name some CTE carried let a view of that name go unchecked.
+Every name goes through the catalog; a CTE that shares a real relation's name gets that relation's
+checks. Over-refusal for such a CTE, not a leak.
+
+## D10 — `run-script` refuses statements that escape the checks (review fixes B4–B6)
+
+`PREPARE`/`EXECUTE`, `DECLARE`/`FETCH`, `COPY … TO`, `DO`, `SET`/`RESET`/`SET ROLE` and `LOAD` are refused
+before connecting. As a second line, a statement that returns rows the read-surface policy did not check
+(other than `SHOW` and `EXPLAIN`) stops the script, rolled back.
+
+## D11 — A server error in a script shows the condition, not the message (departs from the Spec)
+
+The Spec (Cross-cutting) truncates a server error to "its SQLSTATE and first line". Measured: a script
+statement that touches a restricted column without returning it (`UPDATE … SET id = secret::int`) fails
+with a first line that quotes the value. The Spec's own invariant is that a refusal never contains a row
+value, so in scripts a server error shows the SQLSTATE and the condition name only; `--verbose-errors`
+shows the full text. The read path keeps the Spec's form: a query there that names a non-listed column is
+refused before it runs. Spec amendment candidate (Cross-cutting, "Errors never echo data").
 
 ## Consequence recorded — every `information_schema` view is refused
 

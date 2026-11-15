@@ -2,9 +2,10 @@
 
 A guard between AI agents and confidential PostgreSQL databases.
 
-**Status: in development.** The first contract is frozen in
-[`specs/sensitive-database-source.spec.md`](specs/sensitive-database-source.spec.md). The repository
-scaffold and its test fixture exist; the commands below are not built yet.
+**Status: in development, not released.** The first contract is frozen in
+[`specs/sensitive-database-source.spec.md`](specs/sensitive-database-source.spec.md). The commands
+below are built and tested against a synthetic database; deployment on a real machine and the release
+(0.1.0) are still to come.
 
 ## What it is
 
@@ -19,7 +20,7 @@ to a declared connection. It will:
 - run a script on a writable test database only inside a transaction that is rolled back, unless a person
   authorizes a commit for that one run.
 
-Planned commands: `cerberus query`, `cerberus run-script`, `cerberus connections`, `cerberus doctor`, and
+Commands: `cerberus query`, `cerberus run-script`, `cerberus connections`, `cerberus doctor`, and
 `cerberus hook claude-code` (a pre-tool hook that refuses a direct database client aimed at a declared
 connection).
 
