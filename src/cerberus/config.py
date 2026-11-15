@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from cerberus.refusal import Refusal
@@ -40,6 +40,8 @@ class Connection:
     search_path: tuple[str, ...] | None
     passfile: Path
     allow_functions: frozenset[str] = frozenset()
+    deny_relations: frozenset[str] = frozenset()
+    columns: dict[str, frozenset[str]] = field(default_factory=dict)
 
 
 def _load_raw() -> dict:
@@ -92,6 +94,21 @@ def _parse(name: str, raw: dict) -> Connection:
             "config.invalid",
             f"connection {name!r}: 'policy.allow_functions' must be a list of \"schema.function\"",
         )
+    deny = policy.get("deny_relations", [])
+    if not isinstance(deny, list) or not all(isinstance(r, str) and "." in r for r in deny):
+        raise Refusal(
+            "config.invalid",
+            f"connection {name!r}: 'policy.deny_relations' must be a list of \"schema.relation\"",
+        )
+    columns = policy.get("columns", {})
+    if not isinstance(columns, dict) or not all(
+        "." in table and isinstance(cols, list) and all(isinstance(c, str) for c in cols)
+        for table, cols in columns.items()
+    ):
+        raise Refusal(
+            "config.invalid",
+            f"connection {name!r}: 'policy.columns' must map \"schema.table\" to a list of columns",
+        )
     return Connection(
         name=name,
         host=need("host", str),
@@ -104,6 +121,8 @@ def _parse(name: str, raw: dict) -> Connection:
         search_path=search_path,
         passfile=Path(passfile).expanduser() if passfile else config_dir() / "pgpass",
         allow_functions=frozenset(allow),
+        deny_relations=frozenset(deny),
+        columns={table: frozenset(cols) for table, cols in columns.items()},
     )
 
 

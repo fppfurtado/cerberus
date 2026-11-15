@@ -155,6 +155,7 @@ def cluster() -> Cluster:
 
 
 MARKER = "PLANTED-MARKER-4f1c"
+READER_PASSWORD = "reader-synthetic"
 
 _SCHEMA_SQL = f"""
 CREATE SCHEMA IF NOT EXISTS app;
@@ -169,6 +170,26 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_function THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS app.scratch (i int);
 INSERT INTO app.scratch SELECT generate_series(1, 100);
+CREATE TABLE app.grow (id int, label text);
+CREATE TABLE app.other (id int, secret text);
+INSERT INTO app.other VALUES (1, 'harmless-other');
+CREATE TABLE app.hidden (id int);
+CREATE VIEW app.v_vault AS SELECT id, secret FROM app.vault;
+CREATE VIEW app.v_rename AS SELECT id, secret AS harmless FROM app.vault;
+CREATE VIEW app.v_fn AS SELECT app.dump_secret() AS x;
+CREATE MATERIALIZED VIEW app.mv_vault AS SELECT id, secret FROM app.vault;
+CREATE TABLE app.pvault (id int, label text, secret text) PARTITION BY RANGE (id);
+CREATE TABLE app.pvault_p1 PARTITION OF app.pvault FOR VALUES FROM (0) TO (100);
+INSERT INTO app.pvault VALUES (1, 'first', '{MARKER}');
+CREATE TABLE app.ivault (id int, label text, secret text);
+CREATE TABLE app.ivault_c () INHERITS (app.ivault);
+INSERT INTO app.ivault_c VALUES (1, 'first', '{MARKER}');
+CREATE FUNCTION app.vault_rows() RETURNS SETOF app.vault LANGUAGE sql STABLE
+    AS 'SELECT * FROM app.vault';
+CREATE ROLE reader LOGIN PASSWORD '{READER_PASSWORD}';
+ALTER ROLE reader SET search_path = app, public;
+GRANT USAGE ON SCHEMA app TO reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA app TO reader;
 CREATE TABLE IF NOT EXISTS app.schema_ready (ok bool);
 """
 
