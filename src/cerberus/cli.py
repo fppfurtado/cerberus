@@ -62,6 +62,12 @@ def _connections(_: argparse.Namespace) -> int:
     return 0
 
 
+def _hook(args: argparse.Namespace) -> int:
+    from cerberus import hook
+
+    return hook.main()
+
+
 def _doctor(_: argparse.Namespace) -> int:
     report = custody.doctor()
     print(_json(report))
@@ -94,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("connections", help="list declared connections (no secrets)").set_defaults(
         run=_connections
     )
+    hook = commands.add_parser("hook", help="harness hooks")
+    hook.add_argument("harness", choices=("claude-code",))
+    hook.set_defaults(run=_hook)
+
     commands.add_parser("doctor", help="credential custody and deployment checks").set_defaults(
         run=_doctor
     )

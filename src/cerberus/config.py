@@ -42,6 +42,7 @@ class Connection:
     allow_functions: frozenset[str] = frozenset()
     deny_relations: frozenset[str] = frozenset()
     columns: dict[str, frozenset[str]] = field(default_factory=dict)
+    hook_match: tuple[str, ...] = ()
 
 
 def _load_raw() -> dict:
@@ -85,6 +86,9 @@ def _parse(name: str, raw: dict) -> Connection:
     passfile = raw.get("passfile")
     if passfile is not None and not isinstance(passfile, str):
         raise Refusal("config.invalid", f"connection {name!r}: 'passfile' must be a str")
+    hook_match = raw.get("hook_match", [])
+    if not isinstance(hook_match, list) or not all(isinstance(m, str) and m for m in hook_match):
+        raise Refusal("config.invalid", f"connection {name!r}: 'hook_match' must be a list of str")
     policy = raw.get("policy", {})
     if not isinstance(policy, dict):
         raise Refusal("config.invalid", f"connection {name!r}: 'policy' must be a table")
@@ -123,6 +127,7 @@ def _parse(name: str, raw: dict) -> Connection:
         allow_functions=frozenset(allow),
         deny_relations=frozenset(deny),
         columns={table: frozenset(cols) for table, cols in columns.items()},
+        hook_match=tuple(hook_match),
     )
 
 
