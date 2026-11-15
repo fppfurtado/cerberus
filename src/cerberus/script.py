@@ -32,6 +32,20 @@ from cerberus.session import WriteSession
 
 _ALLOWED_TRANSACTION_KINDS = {TransactionStmtKind.TRANS_STMT_SAVEPOINT,
                               TransactionStmtKind.TRANS_STMT_ROLLBACK_TO}
+# Statements whose effect escapes the checks: rows the read-surface policy never sees (B4), code the
+# function rule never reads (B5), settings that override the connection's bound and search path (B6).
+_REFUSED_KINDS = {
+    ast.PrepareStmt: "PREPARE / EXECUTE return rows the read-surface policy does not see",
+    ast.ExecuteStmt: "PREPARE / EXECUTE return rows the read-surface policy does not see",
+    ast.DeclareCursorStmt: "a cursor returns rows the read-surface policy does not see",
+    ast.FetchStmt: "a cursor returns rows the read-surface policy does not see",
+    ast.DoStmt: "a DO block's body is code the function rule does not read",
+    ast.VariableSetStmt: "SET / RESET would override the connection's bound, search path or role",
+    ast.LoadStmt: "LOAD loads a library into the server process",
+}
+# Statements whose rows may be returned without passing the read-surface policy.
+_ROWS_WITHOUT_POLICY = (ast.VariableShowStmt, ast.ExplainStmt)
+
 _NOT_UNDONE = {
     ast.VacuumStmt: "VACUUM",
     ast.CreatedbStmt: "CREATE DATABASE",
@@ -73,18 +87,24 @@ def parse_script(script: str) -> list[Statement]:
         raw = pglast.parse_sql(script)
     except pglast.parser.ParseError as exc:
         raise Refusal("script.parse-error", f"the script does not parse: {exc}") from None
-    encoded = script.encode("utf-8")
     statements = []
     for index, stmt in enumerate(raw, start=1):
+        # pglast's statement offsets count characters (measured), so slice the string itself.
         start = stmt.stmt_location or 0
-        end = start + stmt.stmt_len if stmt.stmt_len else len(encoded)
-        text = encoded[start:end].decode("utf-8").strip()
+        end = start + stmt.stmt_len if stmt.stmt_len else len(script)
+        text = script[start:end].strip()
         tree = stmt.stmt
         label = f"statement {index} ({_first_line(text)})"
         if isinstance(tree, ast.TransactionStmt) and tree.kind not in _ALLOWED_TRANSACTION_KINDS:
             raise Refusal("script.transaction-control",
                           f"{label} controls the transaction; cerberus owns it (SAVEPOINT and ROLLBACK "
                           "TO are allowed)")
+        for kind, why in _REFUSED_KINDS.items():
+            if isinstance(tree, kind):
+                raise Refusal("script.statement-not-allowed", f"{label}: {why}")
+        if isinstance(tree, ast.CopyStmt) and not tree.is_from and not tree.is_program:
+            raise Refusal("script.statement-not-allowed",
+                          f"{label}: COPY … TO returns rows the read-surface policy does not see")
         if isinstance(tree, ast.VacuumStmt) and not tree.is_vacuumcmd:
             raise Refusal("script.not-undone",
                           f"{label}: ANALYZE updates statistics counters a rollback does not undo")
@@ -174,11 +194,18 @@ def run_script(conn: Connection, script: str, *, commit: bool = False,
                               f"statement {stmt.index} ran past this connection's bound of "
                               f"{conn.timeout_ms} ms; the script was rolled back") from None
             except psycopg.Error as exc:
+                # A statement may touch a restricted column without returning it, and the first line
+                # of a server error can quote that value: show the condition, not the message.
                 text = str(exc).strip()
-                shown = text if verbose_errors else (text.splitlines()[0] if text else "")
+                shown = text if verbose_errors else type(exc).__name__
                 raise Refusal("server.error",
                               f"statement {stmt.index}: {exc.sqlstate or 'unknown'}: {shown}; the "
                               "script was rolled back") from None
+            if (cursor.description and not _returns_rows(stmt.tree)
+                    and not isinstance(stmt.tree, _ROWS_WITHOUT_POLICY)):
+                raise Refusal("script.unchecked-rows",
+                              f"statement {stmt.index} returned rows the read-surface policy did not "
+                              "check; the script was rolled back")
             output: dict[str, object] = {"statement": stmt.index, "command": cursor.statusmessage}
             if cursor.description:
                 output["columns"] = [c.name for c in cursor.description]

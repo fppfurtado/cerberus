@@ -124,3 +124,57 @@ def test_b8_a_user_defined_operator_is_refused_in_sublinks_and_order_by(standby,
 def test_b8_built_in_operators_in_sublinks_and_order_by_still_pass(standby) -> None:
     result = run_query(standby, "SELECT id FROM app.vault WHERE id = ANY (SELECT 1) ORDER BY id USING <")
     assert result["rows"] == [[1]]
+
+
+# --- B4–B7 and server-error text in run-script ------------------------------------------------------
+
+from cerberus.script import run_script  # noqa: E402
+
+WPOLICY = '[connection.w.policy.columns]\n"app.vault" = ["id", "label"]\n'
+
+
+@pytest.fixture
+def writable(schema: Cluster, declare):
+    return declare("w", schema.primary, "writable",
+                   'timeout_ms = 1500\nsearch_path = ["app"]\n' + WPOLICY)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "PREPARE p AS SELECT secret FROM app.vault;\nEXECUTE p;",  # B4
+        "DECLARE c CURSOR FOR SELECT secret FROM app.vault;\nFETCH ALL FROM c;",  # B4
+        "COPY app.vault TO STDOUT",  # B4 neighbour: COPY … TO returns rows
+        "DO $$BEGIN RAISE EXCEPTION '%', (SELECT secret FROM app.vault LIMIT 1); END$$;",  # B5
+        "DO $$BEGIN PERFORM set_config('statement_timeout','0',true); END$$;",  # B5
+        "SET statement_timeout = 0;\nSELECT current_setting('statement_timeout');",  # B6
+        "SET LOCAL search_path = public;\nSELECT current_setting('search_path');",  # B6
+        "RESET ALL;",  # B6 neighbour
+        "SET ROLE reader;",  # B6 neighbour
+    ],
+    ids=["prepare-execute", "declare-fetch", "copy-to-stdout", "do-raise", "do-set-config",
+         "set-timeout", "set-local-search-path", "reset-all", "set-role"],
+)
+def test_b4_b5_b6_statements_that_escape_the_checks_are_refused_before_connecting(
+    writable, script: str
+) -> None:
+    unreachable = type(writable)(**{**writable.__dict__, "port": 1})
+    assert refused(run_script, unreachable, script).rule == "script.statement-not-allowed"
+
+
+def test_b7_a_script_with_non_ascii_text_runs_the_statements_that_were_checked(writable) -> None:
+    result = run_script(writable, "SELECT 'ação' AS a;\nSELECT label FROM vault;")
+    assert result["statements"][0]["rows"] == [["ação"]]
+    assert result["statements"][1]["rows"] == [["first"]]
+
+
+def test_a_server_error_in_a_script_does_not_quote_a_restricted_value(writable) -> None:
+    r = refused(run_script, writable, "UPDATE app.vault SET id = secret::int")
+    assert r.rule == "server.error"
+    assert "22P02" in r.detail and "InvalidTextRepresentation" in r.detail
+
+
+def test_show_and_explain_rows_still_return_in_a_script(writable) -> None:
+    result = run_script(writable, "SHOW client_encoding;\nEXPLAIN SELECT id FROM app.vault;")
+    assert result["statements"][0]["rows"] == [["UTF8"]]
+    assert result["statements"][1]["rows"]
