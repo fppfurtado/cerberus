@@ -81,7 +81,21 @@ statement that touches a restricted column without returning it (`UPDATE … SET
 with a first line that quotes the value. The Spec's own invariant is that a refusal never contains a row
 value, so in scripts a server error shows the SQLSTATE and the condition name only; `--verbose-errors`
 shows the full text. The read path keeps the Spec's form: a query there that names a non-listed column is
-refused before it runs. Spec amendment candidate (Cross-cutting, "Errors never echo data").
+refused before it runs. Amended into the Spec as v1.1 (Cross-cutting, "Errors never echo data"), by the
+operator's delegation of the decision (2026-11-15).
+
+## D12 — No expression in a script may read a restricted column (Spec v1.1)
+
+The Spec v1 checked only the statements of a script that return rows, and stated as a residual "what a
+data-modifying statement moves between columns". Measured: `CREATE TABLE … AS SELECT <restricted>` then a
+read of the copy returned the value within one script, and `UPDATE … SET <listed> = <restricted>` does the
+same through a listed column. The read-surface check now runs on every statement of a script (its plan
+source only where `EXPLAIN` can take the statement). A restricted column may still be written, as a `SET`
+or `INSERT` target, which is not a column reference; any expression reading one is refused — including in
+an `EXPLAIN`, an `ON CONFLICT … EXCLUDED`, or a filter. Cost: a script that copies a restricted column on
+purpose is refused; it is a job for a person with a direct client, not for the agent's carrier. The
+residual left is code the statements do not name (a trigger or rule in the database, an allowlisted
+function's body). Decided by the operator's delegation (2026-11-15); amended into the Spec as v1.1.
 
 ## Consequence recorded — every `information_schema` view is refused
 
