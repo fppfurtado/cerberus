@@ -19,8 +19,9 @@
   scripts: no expression of any statement may read a non-listed column of a flagged table (a statement may
   still write one, as a `SET` or `INSERT` target); v1 checked only statements that return rows, and a
   `CREATE TABLE … AS SELECT <restricted>` followed by a read of the copy returned the value in one script
-  (measured on the fixture); a column rename on a flagged table and code the script defines (functions,
-  procedures, triggers, rules) are refused for the same reason (both measured to move the value). The
+  (measured on the fixture); reshaping a flagged relation (a column rename, a detached partition, dropped
+  inheritance) and code the script defines (functions, procedures, triggers, rules) are refused for the same
+  reason (each measured to move the value). The
   residual in Deliberate exclusions narrows accordingly and joins the M5 list. (2) Cross-cutting,
   errors: in scripts a server error shows its SQLSTATE and condition name only; v1's "SQLSTATE and first line"
   quoted a restricted value (`UPDATE … SET id = secret::int`, measured). Approval: the operator delegated the
@@ -199,9 +200,11 @@ timestamp, connection, script SHA-256, statement count.
   non-listed column, or that returns rows reaching a flagged relation outside the policy, is refused and the
   script stops (rolled back). A statement may write a restricted column (as a `SET` or `INSERT` target, or
   from the statement's own proposed row, `EXCLUDED.<column>`): what it may not do is read a stored one. For
-  the same reason a script may not rename a column of a flagged table (the policy lists columns by name),
-  and may not define code the checks do not read (`CREATE FUNCTION`/`PROCEDURE`/`TRIGGER`/`RULE`, `DO`), so
-  no value moves to a readable place (v1.1). `--commit` replaces the final `ROLLBACK` with `COMMIT` only after a
+  the same reason a script may not reshape a flagged relation — no `ALTER TABLE`, rename or `SET SCHEMA`
+  naming one, which covers renaming its columns (the policy lists columns by name) and detaching a
+  partition or dropping inheritance (the policy flags children through the tree) — and may not define code
+  the checks do not read (`CREATE FUNCTION`/`PROCEDURE`/`TRIGGER`/`RULE`/`EVENT TRIGGER`, `DO`), so no value
+  moves to a readable place (v1.1). `--commit` replaces the final `ROLLBACK` with `COMMIT` only after a
   confirmation typed on an interactive terminal (the connection name); with no terminal on stdin it is
   refused. An agent's shell has no terminal, so the operator runs a commit himself.
 - **Hook (PR9).** `cerberus hook claude-code` reads the harness's pre-tool event. For a shell command it
