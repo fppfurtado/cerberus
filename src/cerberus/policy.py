@@ -70,12 +70,8 @@ class _Refs(Visitor):
     def __init__(self) -> None:
         self.ranges: list[NamedRef] = []
         self.range_nodes: list[ast.RangeVar] = []
-        self.cte_names: set[str] = set()
         self.column_refs: list[tuple] = []
         self.natural_or_using: list[ast.JoinExpr] = []
-
-    def visit_CommonTableExpr(self, ancestors, node: ast.CommonTableExpr) -> None:
-        self.cte_names.add(node.ctename)
 
     def visit_RangeVar(self, ancestors, node: ast.RangeVar) -> None:
         alias = node.alias.aliasname if node.alias else None
@@ -231,9 +227,10 @@ class SurfaceCheck:
         refs(parsed.tree)
 
         named: list[tuple[NamedRef, Relation, ast.RangeVar]] = []
+        # Every name goes through the catalog, CTE names included: CTE scope is per query level, so
+        # skipping a name because some CTE somewhere carries it let a view of that name go unchecked.
+        # A CTE that shares a real relation's name gets that relation's checks (conservative).
         for ref, node in zip(refs.ranges, refs.range_nodes):
-            if ref.schema is None and ref.name in refs.cte_names:
-                continue
             rel = self._resolve(ref)
             if rel is not None:
                 named.append((ref, rel, node))
