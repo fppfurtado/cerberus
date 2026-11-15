@@ -112,6 +112,15 @@ class _Collector(Visitor):
         if node.kind not in _NOT_OPERATOR_KINDS and node.name:
             self.operators.append(_qualified(node.name))
 
+    # The other places a query names an operator: `x op ANY/ALL (subquery)` and `ORDER BY x USING op`.
+    def visit_SubLink(self, ancestors, node: ast.SubLink) -> None:
+        if node.operName:
+            self.operators.append(_qualified(node.operName))
+
+    def visit_SortBy(self, ancestors, node: ast.SortBy) -> None:
+        if node.useOp:
+            self.operators.append(_qualified(node.useOp))
+
 
 def check_statement(sql: str) -> ParsedQuery:
     """Step 4: accept exactly one plain SELECT, or refuse naming the rule."""

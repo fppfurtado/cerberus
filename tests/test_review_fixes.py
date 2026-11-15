@@ -103,3 +103,24 @@ def test_b3_an_unresolved_policy_key_refuses_every_query(schema: Cluster, declar
     conn = declare("standby", reader(schema.standby), "server-enforced", policy)
     for sql in ("SELECT secret FROM app.vault", "SELECT id FROM app.hidden", "SELECT 1"):
         assert refused(run_query, conn, sql).rule == "policy.key-unresolved"
+
+
+# --- B8: a user-defined operator wherever the query names one ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id FROM app.vault WHERE id OPERATOR(app.===) ANY (SELECT 1)",
+        "SELECT id FROM app.vault WHERE id OPERATOR(app.===) ALL (SELECT 1)",
+        "SELECT id FROM app.vault ORDER BY id USING OPERATOR(app.===)",
+    ],
+    ids=["any-subquery", "all-subquery", "order-by-using"],
+)
+def test_b8_a_user_defined_operator_is_refused_in_sublinks_and_order_by(standby, sql: str) -> None:
+    assert refused(run_query, standby, sql).rule == "operator.not-allowed"
+
+
+def test_b8_built_in_operators_in_sublinks_and_order_by_still_pass(standby) -> None:
+    result = run_query(standby, "SELECT id FROM app.vault WHERE id = ANY (SELECT 1) ORDER BY id USING <")
+    assert result["rows"] == [[1]]
