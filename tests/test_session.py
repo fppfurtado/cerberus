@@ -18,32 +18,6 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "cerberus"
 GUARDED_MODULE = "session.py"
 
 
-@pytest.fixture
-def declare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Declare synthetic servers in an isolated private config; returns a loader by name."""
-    home = tmp_path / "home"
-    cfg = home / ".config" / "cerberus"
-    cfg.mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    blocks: list[str] = []
-    lines: list[str] = []
-
-    def _declare(name: str, server: Server, cls: str) -> config.Connection:
-        blocks.append(
-            f'[connection.{name}]\nhost = "{server.host}"\nport = {server.port}\n'
-            f'dbname = "{server.dbname}"\nuser = "{server.user}"\nclass = "{cls}"\n'
-        )
-        lines.append(f"{server.host}:{server.port}:{server.dbname}:{server.user}:{server.password}")
-        (cfg / "connections.toml").write_text("\n".join(blocks))
-        passfile = cfg / "pgpass"
-        passfile.write_text("\n".join(lines) + "\n")
-        passfile.chmod(0o600)
-        return config.load(name)
-
-    return _declare
-
-
 def test_read_session_runs_in_a_read_only_transaction(declare, cluster: Cluster) -> None:
     conn = declare("p", cluster.primary, "client-requested")
     with ReadSession(conn) as s:

@@ -152,3 +152,68 @@ def cluster() -> Cluster:
         for name in reversed(started):
             _docker("rm", "-f", "-v", name, check=False)
         _docker("network", "rm", network, check=False)
+
+
+MARKER = "PLANTED-MARKER-4f1c"
+
+_SCHEMA_SQL = f"""
+CREATE SCHEMA IF NOT EXISTS app;
+CREATE TABLE IF NOT EXISTS app.vault (id int PRIMARY KEY, label text, secret text);
+INSERT INTO app.vault VALUES (1, 'first', '{MARKER}') ON CONFLICT DO NOTHING;
+CREATE OR REPLACE FUNCTION app.dump_secret() RETURNS text LANGUAGE sql
+    AS 'SELECT secret FROM app.vault LIMIT 1';
+CREATE OR REPLACE FUNCTION app.int_eq(int, int) RETURNS bool LANGUAGE sql IMMUTABLE
+    AS 'SELECT $1 = $2';
+DO $$ BEGIN
+    CREATE OPERATOR app.=== (LEFTARG = int, RIGHTARG = int, FUNCTION = app.int_eq);
+EXCEPTION WHEN duplicate_function THEN NULL; END $$;
+CREATE TABLE IF NOT EXISTS app.scratch (i int);
+INSERT INTO app.scratch SELECT generate_series(1, 100);
+CREATE TABLE IF NOT EXISTS app.schema_ready (ok bool);
+"""
+
+
+@pytest.fixture(scope="session")
+def schema(cluster: Cluster) -> Cluster:
+    """A synthetic schema on the primary, replicated to the standby before tests use it."""
+    with psycopg.connect(cluster.primary.conninfo(), autocommit=True) as conn:
+        conn.execute(_SCHEMA_SQL)
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        with psycopg.connect(cluster.standby.conninfo()) as conn:
+            if conn.execute("SELECT to_regclass('app.schema_ready')").fetchone()[0] is not None:
+                return cluster
+        time.sleep(0.5)
+    raise RuntimeError("the synthetic schema did not reach the standby")
+
+
+@pytest.fixture
+def declare(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Declare synthetic servers in an isolated private config; returns the loaded declaration.
+
+    ``declare(name, server, cls, extra="")`` — ``extra`` is TOML appended to the connection's table
+    (sub-tables such as ``[connection.NAME.policy]`` included).
+    """
+    from cerberus import config
+
+    home = tmp_path / "home"
+    cfg = home / ".config" / "cerberus"
+    cfg.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    blocks: list[str] = []
+    lines: list[str] = []
+
+    def _declare(name: str, server: Server, cls: str, extra: str = ""):
+        blocks.append(
+            f'[connection.{name}]\nhost = "{server.host}"\nport = {server.port}\n'
+            f'dbname = "{server.dbname}"\nuser = "{server.user}"\nclass = "{cls}"\n{extra}\n'
+        )
+        lines.append(f"{server.host}:{server.port}:{server.dbname}:{server.user}:{server.password}")
+        (cfg / "connections.toml").write_text("\n".join(blocks))
+        passfile = cfg / "pgpass"
+        passfile.write_text("\n".join(lines) + "\n")
+        passfile.chmod(0o600)
+        return config.load(name)
+
+    return _declare

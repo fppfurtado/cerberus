@@ -39,6 +39,7 @@ class Connection:
     client_encoding: str
     search_path: tuple[str, ...] | None
     passfile: Path
+    allow_functions: frozenset[str] = frozenset()
 
 
 def _load_raw() -> dict:
@@ -82,6 +83,15 @@ def _parse(name: str, raw: dict) -> Connection:
     passfile = raw.get("passfile")
     if passfile is not None and not isinstance(passfile, str):
         raise Refusal("config.invalid", f"connection {name!r}: 'passfile' must be a str")
+    policy = raw.get("policy", {})
+    if not isinstance(policy, dict):
+        raise Refusal("config.invalid", f"connection {name!r}: 'policy' must be a table")
+    allow = policy.get("allow_functions", [])
+    if not isinstance(allow, list) or not all(isinstance(f, str) and "." in f for f in allow):
+        raise Refusal(
+            "config.invalid",
+            f"connection {name!r}: 'policy.allow_functions' must be a list of \"schema.function\"",
+        )
     return Connection(
         name=name,
         host=need("host", str),
@@ -93,6 +103,7 @@ def _parse(name: str, raw: dict) -> Connection:
         client_encoding=encoding,
         search_path=search_path,
         passfile=Path(passfile).expanduser() if passfile else config_dir() / "pgpass",
+        allow_functions=frozenset(allow),
     )
 
 
