@@ -74,7 +74,7 @@ checks. Over-refusal for such a CTE, not a leak.
 before connecting. As a second line, a statement that returns rows the read-surface policy did not check
 (other than `SHOW` and `EXPLAIN`) stops the script, rolled back.
 
-## D11 — A server error in a script shows the condition, not the message (departs from the Spec)
+## D11 — A server error in a script shows the condition, not the message (amended into Spec v1.1)
 
 The Spec (Cross-cutting) truncates a server error to "its SQLSTATE and first line". Measured: a script
 statement that touches a restricted column without returning it (`UPDATE … SET id = secret::int`) fails
@@ -92,7 +92,9 @@ read of the copy returned the value within one script, and `UPDATE … SET <list
 same through a listed column. The read-surface check now runs on every statement of a script (its plan
 source only where `EXPLAIN` can take the statement). A restricted column may still be written, as a `SET`
 or `INSERT` target, which is not a column reference; any expression reading one is refused — including in
-an `EXPLAIN`, an `ON CONFLICT … EXCLUDED`, or a filter. Cost: a script that copies a restricted column on
+an `EXPLAIN` or a filter (`EXCLUDED.<column>` in `ON CONFLICT` is the statement's own proposed row
+and passes). A column rename on a flagged table and code the script defines (functions, procedures,
+triggers, rules) are refused too: both moved the value without an expression reading it (review B9, B10). Cost: a script that copies a restricted column on
 purpose is refused; it is a job for a person with a direct client, not for the agent's carrier. The
 residual left is code the statements do not name (a trigger or rule in the database, an allowlisted
 function's body). Decided by the operator's delegation (2026-11-15); amended into the Spec as v1.1.

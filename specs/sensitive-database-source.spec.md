@@ -19,7 +19,9 @@
   scripts: no expression of any statement may read a non-listed column of a flagged table (a statement may
   still write one, as a `SET` or `INSERT` target); v1 checked only statements that return rows, and a
   `CREATE TABLE … AS SELECT <restricted>` followed by a read of the copy returned the value in one script
-  (measured on the fixture). The residual in Deliberate exclusions narrows accordingly. (2) Cross-cutting,
+  (measured on the fixture); a column rename on a flagged table and code the script defines (functions,
+  procedures, triggers, rules) are refused for the same reason (both measured to move the value). The
+  residual in Deliberate exclusions narrows accordingly and joins the M5 list. (2) Cross-cutting,
   errors: in scripts a server error shows its SQLSTATE and condition name only; v1's "SQLSTATE and first line"
   quoted a restricted value (`UPDATE … SET id = secret::int`, measured). Approval: the operator delegated the
   decision ("Delego as três decisões", 2026-11-15); decided by the agent with the reasoning stated in the
@@ -195,8 +197,11 @@ timestamp, connection, script SHA-256, statement count.
   every statement; and steps 6–7 of the read path on every statement that names a flagged relation (the
   plan source where the statement can be explained) — a statement in which any expression reads a
   non-listed column, or that returns rows reaching a flagged relation outside the policy, is refused and the
-  script stops (rolled back). A statement may write a restricted column (as a `SET` or `INSERT` target): what
-  it may not do is read one, so no value moves to a readable place (v1.1). `--commit` replaces the final `ROLLBACK` with `COMMIT` only after a
+  script stops (rolled back). A statement may write a restricted column (as a `SET` or `INSERT` target, or
+  from the statement's own proposed row, `EXCLUDED.<column>`): what it may not do is read a stored one. For
+  the same reason a script may not rename a column of a flagged table (the policy lists columns by name),
+  and may not define code the checks do not read (`CREATE FUNCTION`/`PROCEDURE`/`TRIGGER`/`RULE`, `DO`), so
+  no value moves to a readable place (v1.1). `--commit` replaces the final `ROLLBACK` with `COMMIT` only after a
   confirmation typed on an interactive terminal (the connection name); with no terminal on stdin it is
   refused. An agent's shell has no terminal, so the operator runs a commit himself.
 - **Hook (PR9).** `cerberus hook claude-code` reads the harness's pre-tool event. For a shell command it
@@ -282,7 +287,9 @@ timestamp, connection, script SHA-256, statement count.
   residuals of this design: a built-in function that this Spec's denylist misses; a relation reached only
   through a path none of the three sources shows (for example a function inside an allowlisted function); an implicit cast or a
   user-defined type's output function; side channels through timing or error text; sequence values consumed
-  by a rolled-back script. The custody level is "not reachable by accident": an agent that deliberately
+  by a rolled-back script; on a `writable` connection, code a script's statements do not name — a trigger
+  or rule already defined in the database, or an allowlisted function's body — moving a value into a
+  readable column (v1.1). The custody level is "not reachable by accident": an agent that deliberately
   reads the credential file or disables the hook is outside this build's threat model (PRD Assumptions).
 
 ### Durable invariants
