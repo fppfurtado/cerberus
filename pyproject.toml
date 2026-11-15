@@ -12,6 +12,9 @@ dependencies = [
     "psycopg[binary]==3.3.9",
 ]
 
+[project.scripts]
+cerberus = "cerberus.cli:main"
+
 [project.urls]
 Repository = "https://github.com/fppfurtado/cerberus"
 Issues = "https://github.com/fppfurtado/cerberus/issues"
