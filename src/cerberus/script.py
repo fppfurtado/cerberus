@@ -2,10 +2,13 @@
 
 The whole script is checked before connecting: no transaction control (``SAVEPOINT`` and ``ROLLBACK TO``
 excepted), nothing a rollback does not undo or that cannot run inside a transaction, no denylisted
-function, no client meta-command. The statements then run in one explicit transaction, each under the
-connection's bound, encoding and search path and the function rule; a statement that returns rows
-passes the read-surface policy first. The transaction is always rolled back, unless a person confirms
-a commit for this one run on an interactive terminal.
+function, no client meta-command, and no statement that escapes the checks (``PREPARE``/``EXECUTE``,
+``DECLARE``/``FETCH``, ``COPY … TO``, ``DO``, ``SET``/``RESET``/``SET ROLE``, ``LOAD``). The statements then
+run in one explicit transaction, each under the connection's bound, encoding and search path and the
+function rule; a statement that returns rows passes the read-surface policy first, and one that returns
+rows the policy did not check (other than ``SHOW`` and ``EXPLAIN``) stops the script. A server error shows
+its SQLSTATE and condition name, not its message, unless verbose. The transaction is always rolled back,
+unless a person confirms a commit for this one run on an interactive terminal.
 """
 
 from __future__ import annotations

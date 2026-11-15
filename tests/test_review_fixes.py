@@ -178,3 +178,16 @@ def test_show_and_explain_rows_still_return_in_a_script(writable) -> None:
     result = run_script(writable, "SHOW client_encoding;\nEXPLAIN SELECT id FROM app.vault;")
     assert result["statements"][0]["rows"] == [["UTF8"]]
     assert result["statements"][1]["rows"]
+
+
+def test_rows_from_a_statement_the_policy_did_not_check_stop_the_script(schema: Cluster, declare) -> None:
+    import psycopg
+
+    with psycopg.connect(schema.primary.conninfo(), autocommit=True) as db:
+        db.execute("CREATE OR REPLACE PROCEDURE app.out_proc(OUT x text) LANGUAGE plpgsql "
+                   "AS $$ BEGIN x := 'from-a-procedure'; END $$")
+    conn = declare("w", schema.primary, "writable",
+                   '[connection.w.policy]\nallow_functions = ["app.out_proc"]\n')
+    r = refused(run_script, conn, "CALL app.out_proc(NULL)")
+    assert r.rule == "script.unchecked-rows"
+    assert "from-a-procedure" not in r.detail
