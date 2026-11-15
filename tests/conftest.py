@@ -42,6 +42,7 @@ class Server:
     role: str  # "primary" or "standby"
     host: str
     port: int
+    container: str
     user: str = SUPERUSER
     password: str = PASSWORD
     dbname: str = DBNAME
@@ -59,6 +60,12 @@ class Server:
 class Cluster:
     primary: Server
     standby: Server
+
+
+def server_log(server: Server) -> str:
+    """The server's log so far (the primary logs every statement)."""
+    result = subprocess.run(["docker", "logs", server.container], capture_output=True, text=True)
+    return result.stdout + result.stderr
 
 
 def _docker(*args: str, check: bool = True) -> str:
@@ -111,9 +118,10 @@ def cluster() -> Cluster:
             "-e", "POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256",
             IMAGE,
             "-c", "wal_level=replica", "-c", "max_wal_senders=5", "-c", "hot_standby=on",
+            "-c", "log_statement=all",
         )
         started.append(primary_name)
-        primary = Server("primary", "127.0.0.1", _published_port(primary_name))
+        primary = Server("primary", "127.0.0.1", _published_port(primary_name), primary_name)
         _wait_ready(primary, standby=False)
         # Allow streaming replication from the private test network.
         _docker(
@@ -137,7 +145,7 @@ def cluster() -> Cluster:
             "--entrypoint", "bash", IMAGE, "-c", standby_script,
         )
         started.append(standby_name)
-        standby = Server("standby", "127.0.0.1", _published_port(standby_name))
+        standby = Server("standby", "127.0.0.1", _published_port(standby_name), standby_name)
         _wait_ready(standby, standby=True)
         yield Cluster(primary=primary, standby=standby)
     finally:
