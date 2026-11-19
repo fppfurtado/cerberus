@@ -70,8 +70,8 @@ allow_functions = ["app.normalize"]     # functions defined outside pg_catalog t
   `pg_is_in_recovery()`); a connection declared so that turns out to be a primary is refused before any
   statement of the query is sent. `client-requested`: a read-only transaction on a primary; a standby
   reports the stronger class. `writable`: a test database, used only through `run-script`.
-- **`passfile`** and every **`deny_paths`** entry must be absolute or start with `~/` (`~otheruser/` is
-  refused). A `deny_paths` entry
+- **`passfile`** and every **`deny_paths`** entry must be absolute, `~`, or start with `~/`
+  (`~otheruser/` is refused). A `deny_paths` entry
   is a file, or a directory whose every file counts.
 - **Policy names are exact**: `schema.table`, unquoted identifiers in lower case. A name that is not a
   relation on the server is refused (`policy.key-unresolved`). A table under `policy.columns` exposes only
@@ -88,7 +88,8 @@ variable before connecting.
 ## Commands
 
 Exit status: `0` success, `1` a `doctor` report that is not clean, `2` a usage error (bad arguments),
-`3` a refusal. The hook always exits `0`; its answer is in its output.
+`3` a refusal. The hook answers in its output and exits `0`, also when the event is not JSON; an event it
+cannot handle ends it with a traceback and a non-zero status, and it then answers nothing.
 
 ### `cerberus query <connection> <sql> [--format json|table] [--verbose-errors]`
 
@@ -231,7 +232,7 @@ refusal issued after the guarantee was established; before that it is `null` and
 | | `policy.column-not-listed` | a column reference with the name of a non-listed column (by name: a same-named column of another table in the query is refused too) |
 | | `policy.key-unresolved` | the policy names a relation that is not on the server |
 | | `policy.reshapes-flagged-relation` | a script alters, renames or moves a flagged relation |
-| Bounds and encoding | `limit.timeout` | a statement ran past the connection's bound; it was cancelled on the server (a lock wait past the bound is reported as `server.error`, SQLSTATE 55P03) |
+| Bounds and encoding | `limit.timeout` | a statement ran past the connection's bound; it was cancelled on the server |
 | | `encoding.unrepresentable` | the text sent holds a character the client encoding lacks (its index is named, not the character) |
 | Scripts | `script.unreadable` | the file cannot be read |
 | | `script.encoding` | the file does not decode, or `--encoding` names an unknown or non-text encoding |
@@ -270,7 +271,8 @@ What cerberus does not stop, stated in full in the Spec's Cross-cutting section:
   directory, a script file, an un-normalized path, a quoted base apart from the rest, a path glued to an
   option or prefix, or a symlink named in the command. A short host or `hook_match` string matches as a
   substring and can deny unrelated commands. Tools other than those listed (an MCP or IDE server's) are not
-  checked.
+  checked. An event the hook cannot handle (a malformed tool input) ends it with an error, and the harness
+  then runs that tool call unchecked.
 - **`doctor`'s registration check** does not read project, local or plugin settings, so a directory whose
   project settings disable hooks runs without the hook while `doctor` reports clean. It reads matchers with
   Python's regular expressions, reads a command lexically (a segment that would not run still counts), and
