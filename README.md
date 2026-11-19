@@ -12,7 +12,8 @@ to a declared connection. It:
 
 - refuses every write on a read connection, and states with each result and each refusal which write
   guarantee actually held (enforced by the server, or only requested by the client);
-- keeps declared-sensitive tables and columns out of results, whatever shape the query takes;
+- keeps declared-sensitive tables and columns out of results, refusing every query shape it has been
+  tested against that would reveal them (the known gaps are under [Residual risks](#residual-risks));
 - bounds the time a query may run, on the server;
 - applies each connection's encoding and schema search path without the caller setting them;
 - runs a script on a writable test database only inside a transaction that is rolled back, unless a person
@@ -69,7 +70,8 @@ allow_functions = ["app.normalize"]     # functions defined outside pg_catalog t
   `pg_is_in_recovery()`); a connection declared so that turns out to be a primary is refused before any
   statement of the query is sent. `client-requested`: a read-only transaction on a primary; a standby
   reports the stronger class. `writable`: a test database, used only through `run-script`.
-- **`passfile`** and every **`deny_paths`** entry must be absolute or start with `~`. A `deny_paths` entry
+- **`passfile`** and every **`deny_paths`** entry must be absolute or start with `~/` (`~otheruser/` is
+  refused). A `deny_paths` entry
   is a file, or a directory whose every file counts.
 - **Policy names are exact**: `schema.table`, unquoted identifiers in lower case. A name that is not a
   relation on the server is refused (`policy.key-unresolved`). A table under `policy.columns` exposes only
@@ -85,7 +87,8 @@ variable before connecting.
 
 ## Commands
 
-Exit status: `0` success, `1` a `doctor` report that is not clean, `3` a refusal.
+Exit status: `0` success, `1` a `doctor` report that is not clean, `2` a usage error (bad arguments),
+`3` a refusal. The hook always exits `0`; its answer is in its output.
 
 ### `cerberus query <connection> <sql> [--format json|table] [--verbose-errors]`
 
@@ -120,7 +123,9 @@ each statement's output (its command tag, and its rows when it returns any) and 
 - On every statement: the connection's encoding, search path and time bound; the function rule; the
   read-surface policy. No expression may read a non-listed column of a flagged table; a statement may still
   write one (as a `SET` or `INSERT` target). A script may not reshape a flagged relation.
-- A server error shows its SQLSTATE and condition name only.
+- A server error shows its SQLSTATE and condition name, not its message: in a script, a statement may
+  write a restricted column, and the message can quote that value. `--verbose-errors` shows the full
+  message.
 - **`--commit`** commits instead, only after the connection's name is typed on an interactive terminal;
   with no terminal on stdin it is refused. An agent's shell has no terminal, so a person runs the commit.
   Each commit first appends one record to `$XDG_STATE_HOME/cerberus/commits.jsonl`
@@ -144,7 +149,9 @@ Checks custody and deployment without printing a secret, and exits `1` when anyt
   or others);
 - the hook's registration, in the user settings (`$CLAUDE_CONFIG_DIR/settings.json`, `~/.claude` when
   unset) and the managed settings file: whether a registered command runs `cerberus hook claude-code` under a
-  matcher that selects each tool below, and whether those settings disable hooks.
+  matcher that selects each tool below; not clean when a pair is missing, when either scope sets
+  `disableAllHooks: true`, or when managed settings set `allowManagedHooksOnly: true` while the hook is
+  registered in user settings.
 
 ### `cerberus hook claude-code`
 
@@ -224,7 +231,7 @@ refusal issued after the guarantee was established; before that it is `null` and
 | | `policy.column-not-listed` | a column reference with the name of a non-listed column (by name: a same-named column of another table in the query is refused too) |
 | | `policy.key-unresolved` | the policy names a relation that is not on the server |
 | | `policy.reshapes-flagged-relation` | a script alters, renames or moves a flagged relation |
-| Bounds and encoding | `limit.timeout` | a statement ran past the connection's bound; it was cancelled on the server |
+| Bounds and encoding | `limit.timeout` | a statement ran past the connection's bound; it was cancelled on the server (a lock wait past the bound is reported as `server.error`, SQLSTATE 55P03) |
 | | `encoding.unrepresentable` | the text sent holds a character the client encoding lacks (its index is named, not the character) |
 | Scripts | `script.unreadable` | the file cannot be read |
 | | `script.encoding` | the file does not decode, or `--encoding` names an unknown or non-text encoding |
@@ -237,7 +244,7 @@ refusal issued after the guarantee was established; before that it is `null` and
 | | `script.unchecked-rows` | a statement returned rows the policy did not check |
 | | `commit.no-terminal` | `--commit` with no interactive terminal on stdin |
 | | `commit.not-confirmed` | the typed confirmation did not match the connection name |
-| Errors | `server.error` | the server rejected the statement: SQLSTATE and first line (`query`) or condition name (`run-script`) |
+| Errors | `server.error` | the server rejected the statement: SQLSTATE and first line (`query`) or condition name (`run-script`); the full message only with `--verbose-errors` |
 | | `internal.error` | an unexpected failure; only the exception's class is named |
 
 ## Residual risks
@@ -264,9 +271,13 @@ What cerberus does not stop, stated in full in the Spec's Cross-cutting section:
   option or prefix, or a symlink named in the command. A short host or `hook_match` string matches as a
   substring and can deny unrelated commands. Tools other than those listed (an MCP or IDE server's) are not
   checked.
-- **`doctor`'s registration check** does not read project, local or plugin settings; it reads matchers with
+- **`doctor`'s registration check** does not read project, local or plugin settings, so a directory whose
+  project settings disable hooks runs without the hook while `doctor` reports clean. It reads matchers with
   Python's regular expressions, reads a command lexically (a segment that would not run still counts), and
   resolves the binary in its own environment, not the harness's.
+- **Error output.** `--verbose-errors` prints the server's full message, which can quote a value. An
+  interrupt (Ctrl-C) prints Python's traceback (frames, not values); a failure while printing a refusal
+  is not caught; the hook's output belongs to the harness and is not turned into a refusal.
 
 ## Development
 

@@ -12,8 +12,10 @@ import cerberus
 from cerberus.cli import main
 
 ROOT = Path(__file__).resolve().parent.parent
-RULE = re.compile(r"\"((?:commit|config|connection|custody|encoding|function|guarantee|internal|limit"
-                  r"|operator|policy|script|server|statement)\.[a-z-]+)\"")
+# Every dotted lower-case literal in the package is a refusal rule unless it is one of these.
+RULE = re.compile(r"""["']([a-z][a-z0-9_]*\.[a-z0-9_-]+)["']""")
+NOT_RULES = {"connections.toml", "settings.json", "commits.jsonl", "managed-settings.json",
+             "policy.columns", "policy.deny_relations", "policy.allow_functions"}  # config keys
 
 
 def test_version_is_single_sourced():
@@ -34,7 +36,9 @@ def test_version_flag(capsys):
 
 
 def test_readme_lists_every_refusal_rule_and_no_other():
-    in_code = {m for f in (ROOT / "src" / "cerberus").glob("*.py") for m in RULE.findall(f.read_text())}
-    table = re.findall(r"^\|[^|]*\| `([a-z]+\.[a-z-]+)` \|", (ROOT / "README.md").read_text(), re.M)
+    in_code = {m for f in (ROOT / "src" / "cerberus").rglob("*.py") for m in RULE.findall(f.read_text())
+               if m not in NOT_RULES and not m.startswith("pg_catalog.")}
+    rows = [r for r in (ROOT / "README.md").read_text().splitlines() if re.match(r"^\|[^|]*\| `", r)]
+    table = [re.match(r"^\|[^|]*\| `([^`]+)` \|", r).group(1) for r in rows]
     assert len(table) == len(set(table)), "a rule is listed twice"
     assert set(table) == in_code
