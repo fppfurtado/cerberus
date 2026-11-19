@@ -302,3 +302,32 @@ def test_b11_reshaping_an_unflagged_relation_passes(reshaper) -> None:
 )
 def test_b12_excluded_as_an_alias_inside_a_subquery_is_a_stored_read(writable, script: str) -> None:
     assert refused(run_script, writable, script).rule == "policy.column-not-listed"
+
+
+# --- Final-review gaps (#4): cases that already behave right, pinned as regressions ---------------
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "ALTER TABLE app.pvault_p1 RENAME COLUMN secret TO label2;",
+        "ALTER TABLE app.ivault_c RENAME COLUMN secret TO label2;",
+    ],
+    ids=["partition-directly", "inheritance-child-directly"],
+)
+def test_reshaping_a_flagged_child_directly_is_refused(reshaper, script: str) -> None:
+    assert refused(run_script, reshaper, script).rule == "policy.reshapes-flagged-relation"
+
+
+def test_renaming_the_schema_of_a_flagged_table_is_caught_at_the_next_statement(reshaper) -> None:
+    script = "ALTER SCHEMA app RENAME TO app2;\nSELECT secret FROM app2.vault;"
+    refusal = refused(run_script, reshaper, script)
+    assert refusal.rule == "policy.key-unresolved"
+    assert "statement 2" in refusal.detail
+
+
+def test_a_subquery_reading_the_outer_excluded_row_is_over_blocked(writable) -> None:
+    # Deliberate (Spec v1.2; recorded in D12): the EXCLUDED exemption holds at the ON CONFLICT clause's own level only,
+    # so a subquery that reads the outer proposed row is refused although it reads no stored value.
+    script = ("INSERT INTO app.vault VALUES (1,'x','y') ON CONFLICT (id) DO UPDATE "
+              "SET label = (SELECT excluded.secret);")
+    assert refused(run_script, writable, script).rule == "policy.column-not-listed"

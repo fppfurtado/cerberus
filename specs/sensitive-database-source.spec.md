@@ -1,7 +1,7 @@
 # Spec: cerberus — the outside-iris carrier for sensitive database sources (first build)
 
 - Frozen at: 2026-11-15
-- Spec version: v1.1
+- Spec version: v1.2
 - Source: PRD `sensitive-database-source` v4 (frozen 2026-11-15; v4 adds this carrier to the candidate
   list and changes nothing else; lives in the iris repository,
   `prds/sensitive-database-source.PRD.md`), projected from Brief `sensitive-database-source` v3 (same
@@ -21,12 +21,24 @@
   `CREATE TABLE … AS SELECT <restricted>` followed by a read of the copy returned the value in one script
   (measured on the fixture); reshaping a flagged relation (a column rename, a detached partition, dropped
   inheritance) and code the script defines (functions, procedures, triggers, rules) are refused for the same
-  reason (each measured to move the value). The
+  reason (each measured to move the value; event triggers are refused by extension, not measured). The
   residual in Deliberate exclusions narrows accordingly and joins the M5 list. (2) Cross-cutting,
   errors: in scripts a server error shows its SQLSTATE and condition name only; v1's "SQLSTATE and first line"
   quoted a restricted value (`UPDATE … SET id = secret::int`, measured). Approval: the operator delegated the
   decision ("Delego as três decisões", 2026-11-15); decided by the agent with the reasoning stated in the
   session and in `decisions/0001` D11–D12.
+  v1.1 → v1.2 (2026-11-19), from the build's ledger and the final review (fppfurtado/cerberus#5, #4).
+  (1) The M5 residual list gains two residuals found in the first build and left out of v1.1: a comparison
+  the server resolves through a user-defined type's operator class (the class of the `BETWEEN` case #5
+  named; its review found `CASE`, `GREATEST`/`LEAST`, implicit sort, equality and partition operators, and
+  built-in array, record and range operations in it), and
+  the grammar-version gap between the parser and the server. (2) Choices: the `pglast` claim "the gate and the server cannot disagree" is qualified to the
+  grammar version, and the `psycopg` claim "encodes per the connection's client encoding" is qualified to
+  exclude its JSON loader (fppfurtado/cerberus#7, reported upstream as psycopg/psycopg#1504). (3) Records:
+  the v1.1 entry above now names event triggers, as the body and D12 already did, marked as refused by
+  extension, not measured; the body states the `EXCLUDED` exemption's scope, until now in D12 only, and
+  D12 records the over-block it costs. No rule of the gate changes; the code is untouched. Approval: the
+  operator's merge of the pull request that carries this text.
 - Branch taken (PRD v3 "Branches on J5 test 1"): test 1 ended without an answering verdict (attempt 1
   INCONCLUSIVE, attempt 2 HELD, attempt 3 designed and not funded; iris#34 comment of 2026-11-13) and no
   further test-1 budget is recorded, so the first build (PR1–PR6, PR8a, PR9–PR11, PR13) is entirely outside
@@ -199,7 +211,10 @@ timestamp, connection, script SHA-256, statement count.
   plan source where the statement can be explained) — a statement in which any expression reads a
   non-listed column, or that returns rows reaching a flagged relation outside the policy, is refused and the
   script stops (rolled back). A statement may write a restricted column (as a `SET` or `INSERT` target, or
-  from the statement's own proposed row, `EXCLUDED.<column>`): what it may not do is read a stored one. For
+  from the statement's own proposed row, `EXCLUDED.<column>` at the `ON CONFLICT` clause's own level — a
+  subquery inside it that reads a restricted column through `excluded` is refused, an over-block kept on
+  purpose, D12): what it may not
+  do is read a stored one. For
   the same reason a script may not reshape a flagged relation — no `ALTER TABLE`, rename or `SET SCHEMA`
   naming one, which covers renaming its columns (the policy lists columns by name) and detaching a
   partition or dropping inheritance (the policy flags children through the tree) — and may not define code
@@ -259,13 +274,18 @@ timestamp, connection, script SHA-256, statement count.
   (Python, uv). What it reuses: the PostgreSQL grammar through `pglast`; `pgguard-mcp`'s deny-by-reference
   design and its hostile-input cases as test corpus.
 - **`pglast` (the PostgreSQL parser as a library) over `sqlglot`.** `pglast` is PostgreSQL's own grammar, so
-  the gate and the server cannot disagree on what a statement is; `sqlglot` is an independent grammar whose
+  the gate and the server agree on what a statement is, within one grammar version (v1.2: `pglast` 8.8
+  parses the PostgreSQL 18 grammar and older servers run older ones; a statement only the newer grammar
+  accepts passes the gate's parse and fails on the server as `server.error`; text both grammars accept
+  but parse differently was not searched for, and no task plans that search; both stated at M5); `sqlglot` is an independent grammar whose
   authors of a sibling project document edge-case disagreement. Retrieved 2026-11-15: `pglast` 8.8
   (2026-11-13, PostgreSQL 18 grammar) on PyPI. Pin an exact version (PRD R2: an upstream project broke on an
   unpinned-then-vanished parser release).
 - **`psycopg` 3 (binary) as the driver.** It encodes per the connection's client encoding (the recorded
   false zero came from a terminal/encoding mismatch in the direct client, S4 E1) and exposes the server's
-  cancel and timeout errors. Retrieved 2026-11-15: 3.3.9.
+  cancel and timeout errors. Retrieved 2026-11-15: 3.3.9. One exception, measured in SP-T6 (v1.2): its
+  `json`/`jsonb` loader decodes as UTF-8 whatever the client encoding is, so cerberus loads both types as
+  text (fppfurtado/cerberus#7, reported upstream as psycopg/psycopg#1504).
 - **Server `statement_timeout` as the bound (PR5), not a client timer.** Measured 2026-11-12 (S4): killing a
   client leaves its backend and parallel worker running. A server-side bound holds even if cerberus dies.
 - **No pooling, one connection per invocation.** The job is keyed, occasional lookups (Brief F7). Connection
@@ -289,7 +309,16 @@ timestamp, connection, script SHA-256, statement count.
 - **Residual risks stated to the operator at M5 (PRD R1).** No server-side backstop exists for PR4. Known
   residuals of this design: a built-in function that this Spec's denylist misses; a relation reached only
   through a path none of the three sources shows (for example a function inside an allowlisted function); an implicit cast or a
-  user-defined type's output function; side channels through timing or error text; sequence values consumed
+  user-defined type's output function; a comparison the server resolves through a user-defined type's
+  operator class, which may run a user-defined operator the allowlist never sees — where the query names
+  no operator (`BETWEEN` in its four kinds, whose keyword the parser records instead of an operator, so the
+  gate does not check it; simple `CASE`; `GREATEST`/`LEAST`; the sort and equality operators of `ORDER BY`
+  without `USING`, `DISTINCT`, `GROUP BY`, window `PARTITION BY`, set operations and `USING`/`NATURAL`
+  joins), and where a built-in array, record or range operation compares the elements of such a type
+  (v1.2); the grammar-version gap: a statement only
+  the parser's newer grammar accepts fails on the server instead of at the gate, and text both grammars
+  accept but parse differently was not searched for (v1.2); side channels through timing or
+  error text; sequence values consumed
   by a rolled-back script; on a `writable` connection, code a script's statements do not name — a trigger
   or rule already defined in the database, or an allowlisted function's body — moving a value into a
   readable column (v1.1). The custody level is "not reachable by accident": an agent that deliberately
