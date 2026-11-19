@@ -102,6 +102,8 @@ def _holder(connection: str, path: Path) -> dict[str, object]:
     """A declared other holder of a connection's password (``deny_paths``, Spec v1.3)."""
     entry: dict[str, object] = {"connection": connection, "location": str(path), "exists": path.exists()}
     problems = []
+    if not entry["exists"]:
+        problems.append("missing: the declaration protects nothing at this path")
     if inside_working_tree(path):
         problems.append("inside a git working tree")
     if path.is_file() and stat.S_IMODE(os.stat(path).st_mode) & 0o077:

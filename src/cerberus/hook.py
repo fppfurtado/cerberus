@@ -166,15 +166,23 @@ def _names_protected_path(command: str, protected: list[Path]) -> bool:
     return False
 
 
-def _is_cerberus(segment: str) -> bool:
+def program_words(command: str) -> list[str]:
+    """The command's words from its program on: environment assignments, ``env``, ``command``,
+    ``exec`` and ``uv run`` dropped. Shared with ``doctor``'s registration check, so the two read a
+    ``cerberus`` invocation the same way."""
     try:
-        words = shlex.split(segment)
+        words = shlex.split(command)
     except ValueError:
-        words = segment.split()
+        words = command.split()
     while words and (_ASSIGNMENT.match(words[0]) or words[0] in ("env", "command", "exec")):
         words = words[1:]
     if words[:2] == ["uv", "run"]:
         words = words[2:]
+    return words
+
+
+def _is_cerberus(segment: str) -> bool:
+    words = program_words(segment)
     return bool(words) and Path(words[0]).name == "cerberus"
 
 

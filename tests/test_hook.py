@@ -300,3 +300,20 @@ deny_paths = ["tools/wrapper.env"]
     with pytest.raises(Refusal) as exc:
         config.load_all()
     assert exc.value.rule == "config.invalid" and "deny_paths" in exc.value.detail
+
+
+def test_grep_with_a_relative_path_resolves_against_the_event_cwd(home) -> None:
+    denial(hook(pre_grep("pgpass", cwd=str(home / ".config" / "cerberus")))[1])
+    (home / "project").mkdir()
+    assert hook(pre_grep("src", cwd=str(home / "project"))) == (0, None)
+
+
+def test_an_invalid_declaration_still_adds_the_pointer_on_a_failed_command(home) -> None:
+    (home / ".config" / "cerberus" / "connections.toml").write_text(f"""
+[connection.replica]
+host = "{HOST}"
+port = "not-a-number"
+""")
+    error = f'connection to server at "{HOST}" failed: fe_sendauth: no password supplied'
+    out = hook(failed_bash("python3 report.py", error))[1]["hookSpecificOutput"]
+    assert "'replica'" in out["additionalContext"] and "invalid" in out["additionalContext"]

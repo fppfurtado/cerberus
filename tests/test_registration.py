@@ -108,3 +108,16 @@ def test_unparseable_settings_are_reported(claude_dir: Path) -> None:
     report = registration.report()
     assert report["ok"] is False
     assert any("unreadable" in p for p in report["problems"])
+
+
+def test_disable_all_hooks_in_managed_settings_is_not_ok(claude_dir: Path, tmp_path: Path) -> None:
+    write(claude_dir / "settings.json", settings())
+    write(tmp_path / "managed-settings.json", {"disableAllHooks": True})
+    report = registration.report()
+    assert report["ok"] is False
+    assert any("managed settings set disableAllHooks" in p for p in report["problems"])
+
+
+def test_disable_all_hooks_false_is_ok(claude_dir: Path) -> None:
+    write(claude_dir / "settings.json", settings(disableAllHooks=False))
+    assert registration.report()["ok"] is True

@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 from pathlib import Path
+
+from cerberus.hook import program_words
 
 REQUIRED = (
     ("PreToolUse", "Bash"),
@@ -28,7 +29,6 @@ MANAGED_SETTINGS = (
     Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
 )
 _EXACT_LIST = re.compile(r"^[A-Za-z0-9_\-, |]+$")
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def user_settings() -> Path:
@@ -62,14 +62,7 @@ def matcher_selects(matcher: object, tool: str) -> bool:
 def runs_hook(command: object) -> bool:
     if not isinstance(command, str):
         return False
-    try:
-        words = shlex.split(command)
-    except ValueError:
-        return False
-    while words and (_ASSIGNMENT.match(words[0]) or words[0] in ("env", "command", "exec")):
-        words = words[1:]
-    if words[:2] == ["uv", "run"]:
-        words = words[2:]
+    words = program_words(command)
     if not words or Path(words[0]).name != "cerberus":
         return False
     rest = words[1:]

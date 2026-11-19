@@ -307,3 +307,19 @@ passfile = "pgpass"
     with pytest.raises(Refusal) as exc:
         config.load_all()
     assert exc.value.rule == "config.invalid" and "passfile" in exc.value.detail
+
+
+def test_doctor_is_not_clean_when_a_declared_holder_is_missing(
+    home: Path, cluster: Cluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_secret_file(home / ".config" / "cerberus" / "pgpass", [pass_line(cluster)])
+    declare_primary(home, cluster)
+    path = home / ".config" / "cerberus" / "connections.toml"
+    typo = home / "tools" / "wrapper-typo.env"
+    path.write_text(path.read_text().replace(
+        "[connection.synth]", f'[connection.synth]\ndeny_paths = ["{typo}"]', 1))
+    register_hook(home)
+    code, report, _ = run_doctor(capsys)
+    assert code == 1
+    assert report["other_holders"][0]["exists"] is False
+    assert report["other_holders"][0]["problems"][0].startswith("missing")
