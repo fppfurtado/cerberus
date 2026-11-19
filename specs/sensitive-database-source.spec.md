@@ -1,7 +1,7 @@
 # Spec: cerberus — the outside-iris carrier for sensitive database sources (first build)
 
 - Frozen at: 2026-11-15
-- Spec version: v1.2
+- Spec version: v1.3
 - Source: PRD `sensitive-database-source` v4 (frozen 2026-11-15; v4 adds this carrier to the candidate
   list and changes nothing else; lives in the iris repository,
   `prds/sensitive-database-source.PRD.md`), projected from Brief `sensitive-database-source` v3 (same
@@ -38,6 +38,19 @@
   the v1.1 entry above now names event triggers, as the body and D12 already did, marked as refused by
   extension, not measured; the body states the `EXCLUDED` exemption's scope, until now in D12 only, and
   D12 records the over-block it costs. No rule of the gate changes; the code is untouched. Approval: the
+  operator's merge of the pull request that carries this text.
+  v1.2 → v1.3 (2026-11-19), from SP-T10's deployment and its review (fppfurtado/cerberus#6, #9, #10).
+  (1) Hook: what it protects is now a set of paths, not one file: each connection's password file, the
+  other holders of that connection's password the declaration lists (`deny_paths`), and the default
+  password file path whatever the declaration says. The file-tool deny covers `Grep` (v1.2 let `Grep` read
+  the password file: tested), including a search over a directory that contains a protected path; and a
+  shell command that names a protected path is denied (v1.2 let `cat <password file>` through). (2) Hook on
+  a broken connections file: v1.2 went silent on any `config.invalid`; v1.3 keeps what it can read. (3)
+  `doctor`'s "whether the hook is registered", listed since v1 and never specified or built, is specified,
+  and `doctor` reports the declared other holders (#9).
+  (4) Deployment text: SP-T10 as executed — the `uv tool` channel's home, the Bitwarden items, the scope of
+  the in-tree credential copies and the holders outside the trees (Tech choices, SP-T10, Deliberate
+  exclusions). (5) Facts measured at SP-T10 on the case study enter Risks and Assumptions. Approval: the
   operator's merge of the pull request that carries this text.
 - Branch taken (PRD v3 "Branches on J5 test 1"): test 1 ended without an answering verdict (attempt 1
   INCONCLUSIVE, attempt 2 HELD, attempt 3 designed and not funded; iris#34 comment of 2026-11-13) and no
@@ -124,7 +137,8 @@ outside iris; this Spec is frozen against v4.
 
 ### Data model
 
-**Connection declaration** — one private file, `~/.config/cerberus/connections.toml` (PR1; the instance lives
+**Connection declaration** — one private file, `connections.toml` in the configuration directory
+(`$XDG_CONFIG_HOME/cerberus/`, `~/.config/cerberus/` when the variable is unset; PR1; the instance lives
 only here):
 
 ```toml
@@ -134,8 +148,11 @@ class = "server-enforced"        # or "client-requested" or "writable"
 timeout_ms = 30000               # default when absent: 30000
 client_encoding = "UTF8"         # default when absent: UTF8
 search_path = ["…", "…"]         # optional; absent = the role's default
-passfile = "~/.config/cerberus/pgpass"   # default; libpq password-file format
+passfile = "~/.config/cerberus/pgpass"   # default: pgpass in the configuration directory; libpq format;
+                                         # absolute or ~ (v1.3)
 hook_match = ["…"]               # optional extra strings that identify this connection in a command
+deny_paths = ["…"]               # optional other holders of this connection's password (v1.3): a file,
+                                 # or a directory whose every file counts
 
 [connection.NAME.policy]
 deny_relations = ["schema.table", …]                 # whole relation never readable
@@ -224,9 +241,50 @@ timestamp, connection, script SHA-256, statement count.
   refused. An agent's shell has no terminal, so the operator runs a commit himself.
 - **Hook (PR9).** `cerberus hook claude-code` reads the harness's pre-tool event. For a shell command it
   denies when the command is not itself a `cerberus` invocation and its text contains a declared connection's
-  host or one of its `hook_match` strings. For a file read or edit it denies the credential file's path. The
-  denial names the connection and the command to use instead (`query` for read classes, `run-script` for
-  `writable`). Anything that names no declared connection passes untouched. Refusal with a pointer was
+  host or one of its `hook_match` strings. The denial names the connection and the command to use instead
+  (`query` for read classes, `run-script` for `writable`). An event that none of the hook's rules here
+  selects (the deny rules, and the failed-tool context below) gets no answer.
+  **Protected paths (v1.3).** The set is: each declared connection's password file and each entry of its
+  `deny_paths` (the other holders of that connection's password: a file, or a directory, every file under
+  which counts), plus the default password file path always (`pgpass` in the configuration directory,
+  `$XDG_CONFIG_HOME/cerberus/`, or `~/.config/cerberus/` when the variable is unset in the hook's
+  process). A `passfile` or `deny_paths` entry must be absolute or start with `~`, else the declaration is
+  `config.invalid`. The connections file is not protected: it holds no password, and `cerberus
+  connections` already shows what of it an agent needs (#6's wider option, the whole directory, is
+  narrowed for that reason). A file tool (`Read`, `Edit`, `Write`, `NotebookEdit`, and `MultiEdit` for a
+  harness version that still has it) is denied on a path that is a protected file or lies under a
+  protected directory. A content search (`Grep`) is denied when its search path — the event's working
+  directory when it names none — is protected as above or contains a protected path; whether the search
+  tool would skip a hidden or ignored file is not relied on. The cost is stated: a `Grep` with no path in a
+  session whose working directory is the home directory is denied, and so is one whose `glob` would have
+  excluded the protected file; the denial says to search a narrower path. Paths are compared resolved,
+  symlinks followed; a relative path in an event resolves against the event's working directory. A
+  filename search (`Glob`) reads no content and is not checked. A path denial, in any tool, says the path
+  holds a cerberus credential and is read only by cerberus or its own tool.
+  A shell command is denied when any part of it — a `cerberus` invocation included, since `cerberus` never
+  takes a password holder as an argument — names a protected path in one of these spellings: as declared,
+  resolved, with the home directory written `~`, `$HOME` or `${HOME}`, or with the configuration base
+  written `$XDG_CONFIG_HOME` or `${XDG_CONFIG_HOME}`. A spelling counts as named where it starts the
+  command or follows whitespace, a quote, `=`, `:`, `(`, a backtick or a shell operator, and where it ends
+  the command or is followed by whitespace, a quote, `/`, `)`, a backtick or a shell operator — so a
+  protected directory named with a path below it counts, and a protected `/x/.env` does not match
+  `/x/.envrc`. A command is also denied when it names, the same way, a protected path's parent directory
+  and, anywhere in it, the protected path's last component at the same boundaries or after a `/` (so
+  `cd <dir> && cat <file>` and `cat ./<file>` count). That rule over-blocks a command that names the
+  directory and merely uses the word, such as `ls ~ && echo <name>`; for a holder directly under the home
+  directory with a common name, that is most commands containing `~` and the name. Like the host match,
+  this is text matching at the careless-agent level, not a boundary; the escapes known are listed in
+  Cross-cutting.
+  **A broken connections file (v1.3).** A missing or unreadable file, or one that is not TOML, leaves only
+  the default password file path protected. A file that parses as TOML but holds an invalid declaration
+  (every `cerberus` command that reads it then refuses with `config.invalid`, `doctor` naming the error)
+  still protects what it shows: from each `[connection.NAME]` table the hook takes every non-empty string
+  it finds under `host` and `hook_match`, and every absolute or `~` string under `passfile` and
+  `deny_paths`, ignoring other values. A shell denial on such a host names the connection and says the
+  connections file is invalid, so no `cerberus` command works until it is fixed and `cerberus doctor`
+  names the error; it points to no command. As in a valid file, a short host or `hook_match` string
+  matches as a substring, so it may deny many commands; the hook errs toward denying.
+  Refusal with a pointer was
   chosen over rewriting the command into a cerberus call (PRD R4's routing option): a direct client's flags
   and scripts do not translate losslessly. A direct client the pre-tool match cannot see (a script file that
   holds the host) fails at the server for lack of a credential; for that case the hook also handles the
@@ -239,7 +297,26 @@ timestamp, connection, script SHA-256, statement count.
   followed) to a path inside a git working tree, naming the path class, not the path. `cerberus doctor`
   reports, without printing a secret: the password file's mode and location; any declared connection that
   still has an entry in `~/.pgpass`; any `~/.pgpass` entry whose password equals one in custody (compared in
-  memory; only the entry's host is printed); whether the hook is registered.
+  memory; only the entry's host is printed); whether the hook is registered. For each `deny_paths` entry
+  (v1.3, #9) it also reports whether it exists, whether it sits inside a git working tree, and, for a file,
+  whether it is readable by group or others; either of the last two makes the report not clean.
+  The registration check (v1.3) reads the two settings scopes that apply to every session of the user: the
+  user settings (`settings.json` in `$CLAUDE_CONFIG_DIR`, `~/.claude` when unset), where the deployment
+  registers the hook, and the managed settings file (`/etc/claude-code/managed-settings.json` on Linux,
+  `/Library/Application Support/ClaudeCode/managed-settings.json` on macOS). For each event and tool the
+  hook serves — the pre-tool event for `Bash`, `Read`, `Edit`, `Write`, `NotebookEdit` and `Grep`, and the
+  failed-tool event for `Bash` (`MultiEdit` is not required: the current harness reference lists no such
+  tool) — it reports whether a registered command runs the hook under a matcher that selects that tool. A
+  command runs the hook when its first program word, after environment assignments, `env` and `uv run`, is
+  named `cerberus` and the words `hook claude-code` follow. Matchers are read by the rules of the Claude
+  Code hooks reference (read 2026-11-19): omitted, empty or `*` matches all; one made only of letters,
+  digits, `_`, `-`, spaces, `,` and `|` is a list of exact names; anything else is an unanchored
+  JavaScript regular expression, evaluated here with Python's `re.search` (a pattern Python cannot compile
+  counts as selecting nothing; the two dialects agree on the alternations and anchors matchers use, and
+  any other difference is a stated residual). Not clean: a missing pair; `disableAllHooks: true` in either
+  scope; or managed settings with `allowManagedHooksOnly: true` while the registration is in user settings.
+  Not read, so not reported (Cross-cutting): project and local settings, which apply per directory, and
+  plugin hooks.
 
 ### Tech choices
 
@@ -292,9 +369,14 @@ timestamp, connection, script SHA-256, statement count.
   setup cost is paid per query; revisit only on evidence.
 - **Deployment through the operator's existing env-stack homes** (dotfiles `CLAUDE.md`, sections "Secrets via
   Bitwarden" and "Repos relacionados", read 2026-11-15): the connections file and the password file are
-  whole-file Bitwarden items of the work account rendered by chezmoi as `private_` templates under the
-  operator's work context; the hook is registered through the dotfiles settings template; the tool is installed
-  through the loadout's `uv tool` channel; the repository enters the `mr` inventory.
+  rendered by chezmoi from Bitwarden items of the work account as `private_` templates under the
+  operator's work context; the hook is registered through the dotfiles settings template; the tool is
+  installed through the `uv tool` channel; the repository enters the `mr` inventory. As deployed (SP-T10,
+  2026-11-19, v1.3): the `uv tool` channel lives in the dotfiles repository, not the loadout, so the whole
+  deployment landed in dotfiles; the connections file joins two items, because one Notes field holds at
+  most 10000 encrypted characters and the policy repeats per connection; the password file is rendered
+  from one item, except that the personal role's password is taken from an existing item the operator
+  already keeps current, so no second copy of it exists.
 
 ### Cross-cutting
 
@@ -323,6 +405,19 @@ timestamp, connection, script SHA-256, statement count.
   or rule already defined in the database, or an allowlisted function's body — moving a value into a
   readable column (v1.1). The custody level is "not reachable by accident": an agent that deliberately
   reads the credential file or disables the hook is outside this build's threat model (PRD Assumptions).
+  The hook's path match is text matching (v1.3). A shell command reaches a protected path unrefused through
+  a glob, a variable assembled at run time, a relative path from any directory other than the file's own
+  (`cd ~ && cat .config/…`), a recursive search over an ancestor directory (`grep -r x ~`), or a script
+  file; a base written in quotes apart from the rest (`"$HOME"/.config/…`); a path glued to an option or
+  prefix the boundaries do not list (`-f/path`, `@/path`, `file:///path`); a symlink to the holder named in
+  the command (the shell rule matches text; only the file tools and `Grep` resolve links). A holder of a
+  custody password that no declaration lists is not protected at all. A tool outside
+  the listed ones that reads files (an MCP or IDE server's) is not checked. A connections file that is
+  missing, unreadable or not valid TOML leaves only the default password file path protected (every
+  `cerberus` command refuses then, and `doctor` reports the refusal). `doctor`'s registration check does
+  not see project, local or plugin settings, so a directory whose project settings disable hooks runs
+  without the hook while `doctor` reports clean; and it reads a matcher's JavaScript regular expression
+  with Python's engine, so a pattern using a construct the two read differently may be misreported.
 
 ### Durable invariants
 
@@ -349,7 +444,13 @@ timestamp, connection, script SHA-256, statement count.
   for a declared connection" (test: with a valid `~/.pgpass` entry and no custody entry, the connection
   fails for lack of a credential); "WHEN `cerberus doctor` runs, the system SHALL report each declared
   connection still present in `~/.pgpass` and each `~/.pgpass` entry sharing a password in custody, printing
-  no secret" — depends on: SP-T1
+  no secret"; "WHEN `cerberus doctor` runs, the system SHALL report, for each event and tool the hook
+  serves, whether the user or managed settings register `cerberus hook claude-code` under a matcher that
+  selects it, and SHALL NOT report clean while one is missing or while those settings disable it" (v1.3;
+  tests: settings with every pair; one missing `Grep`; a regex matcher; an omitted matcher; a command
+  through `uv run`; `disableAllHooks`; managed-only hooks; no settings at all); "WHEN a `deny_paths`
+  entry sits inside a git working tree, or is a file readable by group or others, `cerberus doctor` SHALL
+  NOT report clean" (v1.3) — depends on: SP-T1
 - SP-T3: Guarded session and write guarantee — implements PR2 — acceptance (EARS): "the system SHALL
   open every read connection in a read-only transaction and return a guarantee field established on that
   connection, on results and on refusals issued after it"; "WHEN the server is a standby, the guarantee SHALL
@@ -415,34 +516,59 @@ timestamp, connection, script SHA-256, statement count.
   `--commit` is confirmed on a terminal by typing the connection name, the system SHALL commit and append one
   authorization record (time, connection, script hash)"; "IF the connection is not `writable`, THEN
   `run-script` SHALL refuse" — depends on: SP-T3, SP-T4
-- SP-T9: `cerberus hook claude-code` — implements PR9 — acceptance (EARS): "WHEN a recorded pre-tool event
-  carries a shell command that names a declared connection's host or `hook_match` string and is not a
-  `cerberus` invocation — the direct command-line client, or an inline script that names the host — the
-  system SHALL answer deny with the connection's name and the command to use (`query`, or `run-script` for
-  `writable`)"; "WHEN the command names no declared connection, the system SHALL answer nothing and exit
-  0"; "WHEN the event is a read or edit of the credential file, the system SHALL answer deny"; "WHEN a
-  failed-tool event's output shows an authentication failure naming a declared host (the case of a script
-  FILE that holds the host, which the pre-tool match cannot see), the system SHALL add the pointer as
-  context"; "IF the connections file is missing or unreadable, THEN the hook SHALL exit 0 and block nothing"
-  (persisted tests replay recorded event payloads, one per case above; the payload shapes, and whether a
-  failed-tool hook may add context, are recorded from the harness's hooks reference at build time) —
-  depends on: SP-T2
+- SP-T9: `cerberus hook claude-code` — implements PR9 — acceptance (EARS; v1.3 states the whole list, v1.2's
+  "names no declared connection … answer nothing" and "missing or unreadable … block nothing" clauses are
+  replaced): "WHEN a recorded pre-tool event carries a shell command that names a declared connection's
+  host or `hook_match` string and is not a `cerberus` invocation — the direct command-line client, or an
+  inline script that names the host — the system SHALL answer deny with the connection's name and the
+  command to use (`query`, or `run-script` for `writable`)"; "WHEN a shell command names a protected path
+  in any listed spelling at the stated boundaries, or names a protected path's parent directory and its
+  last component, the system SHALL answer deny, a `cerberus` invocation included"; "WHEN a file-tool event
+  targets a protected file, or a path under a protected directory (a relative path resolved against the
+  event's working directory), the system SHALL answer deny"; "WHEN a `Grep` event's search path (or,
+  absent, the event's working directory) is protected or contains a protected path, the system SHALL
+  answer deny"; "WHEN a failed-tool event's output shows an authentication failure naming a declared host
+  (the case of a script FILE that holds the host, which the pre-tool match cannot see), the system SHALL
+  add the pointer as context"; "IF the connections file is missing, unreadable or not TOML, THEN the hook
+  SHALL exit 0 and its only denial SHALL be of the default password file path"; "IF the connections file
+  parses but holds an invalid declaration, THEN the hook SHALL still deny on every string it can read as
+  stated, a host denial saying the file is invalid"; "WHEN an event matches none of the clauses above (a
+  command naming no declared connection and no protected path; a `Grep` over a directory that holds no
+  protected path; a path that only shares a protected path's prefix, such as `/x/.envrc` for `/x/.env`),
+  the system SHALL answer nothing and exit 0" (persisted tests replay recorded event payloads, at least one
+  per clause; the payload shapes, and whether a failed-tool hook may add context, are recorded from the
+  harness's hooks reference at build time) — depends on: SP-T2
 - SP-T10: Deploy on the operator's machine — implements PR1, PR9, PR13; verifies PRD M5 — acceptance:
   (a) dotfiles: the connections file and the password file are rendered from Bitwarden items of the work
   account as `private_` templates in the work context, registered in the secrets registry; the hook is
-  registered in the settings template; `cerberus` enters the `mr` inventory and the loadout's `uv tool`
-  channel — each landed by a pull request in its repository; (b) the declared connections' entries leave
-  `~/.pgpass`, and the credential recorded inside a working tree (Brief F11) is moved outside it with its
-  consumer re-pointed, before first use; `cerberus doctor` reports clean; (c) M5: the operator accepts the
+  registered in the settings template; `cerberus` enters the `mr` inventory and the `uv tool` channel (both
+  homed in dotfiles, v1.3) — each landed by a pull request in its repository; (b) the declared connections'
+  entries leave `~/.pgpass`; every working tree on the machine is scanned by the value of each custody
+  password (not only the path Brief F11 recorded: worktree tooling copies a value without its path, v1.3),
+  and each copy found leaves the trees before first use — moved outside with its consumer re-pointed where
+  a consumer still needs it, deleted otherwise — until a re-scan finds none; `cerberus doctor` reports
+  clean; (c) M5: the operator accepts the
   declared read-surface policy and the residuals of Cross-cutting — a recorded yes; (d) the operator's manual
   for the commands he runs by hand (`run-script --commit`, `doctor`) is written in the dotfiles manuals home
-  — depends on: SP-T7, SP-T8, SP-T9 (operator acts: Bitwarden items; the `~/.pgpass` edit; M5)
+  — depends on: SP-T7, SP-T8, SP-T9 (operator acts: Bitwarden items; the `~/.pgpass` edit; M5).
+  Executed 2026-11-19 against v1.2 (fppfurtado/dotfiles#313; M5 recorded on fppfurtado/iris#34): (a) one
+  dotfiles pull request, no loadout one; (b) the scan found four gitignored files inside working trees
+  holding a custody password, plus fourteen copies in session worktrees that a `.worktreeinclude` had made;
+  all left the trees and the re-scan finds none (#10 does not record which were moved and which deleted,
+  nor whether the copy Brief F11 recorded is one of the four; that one was moved for the local application
+  stack, Deliberate exclusions); `doctor` reported clean under v1.2's checks. v1.3's `doctor` checks more,
+  so the deployment is brought to it before SP-T11 (SP-T11(0)).
 - SP-T11: Replay M1 on the case study, operator present, VPN up — verifies PRD M1, M2, M3 and the live
-  halves of PR8a, PR9, PR11 — acceptance: (a) M1: every row of the private replay set that belongs to this
+  halves of PR8a, PR9, PR11 — acceptance: (0) before the replay (v1.3): the deployment runs this build's
+  hook and `doctor` — the installed tool updated, the other holders of the personal role's password listed
+  in its connection's `deny_paths`, `Grep` added to the hook's matcher, each landed in dotfiles by a pull
+  request — and `cerberus doctor` reports clean under v1.3's checks; the residuals v1.3 adds to
+  Cross-cutting are accepted by the operator, a recorded yes on fppfurtado/iris#34 (M5's form); and the
+  suite passes on a PostgreSQL 15 fixture, the case study's major version; (a) M1: every row of the private replay set that belongs to this
   build (RP-J1, RP-J2, RP-J3, RP-J4a, RP-J4b, RP-J7) passes, the two statements marked RECOVER recovered
   first; (b) M2: every write attempt in the replay fails with its guarantee stated; each production read
   replica reports `server-enforced` and the homologation read connection reports `client-requested`
-  (PR2(c)); (c) PR9 in the live harness, fresh session: the direct command-line client aimed at a declared
+  (PR2(c)); the two log-history primaries report `client-requested` (v1.3); (c) PR9 in the live harness, fresh session: the direct command-line client aimed at a declared
   connection is refused with the pointer; a script file using a client library aimed at a declared
   connection fails to authenticate and the pointer is shown; a client aimed at an undeclared database is
   unaffected; (d) PR8a: one query from a directory outside every repository in a fresh session returns rows
@@ -482,7 +608,14 @@ Trigger-source: fppfurtado/iris#73 · the case-study harness memory or session j
   0600) and the hook refuses reads of it, but the agent runs as the same OS user and could read it on
   purpose. The OS-level form is the armed deferral above. A second holder also remains for the writable
   role: the local application stack that already uses that credential keeps its own copy, moved outside the
-  working tree (SP-T10(b)).
+  working tree (SP-T10(b)). Found at SP-T10 (v1.3): the personal role's password has further holders
+  outside every working tree — an operator wrapper's environment file and another tool's credential file,
+  each read by its own tool. They stay (each serves its tool). SP-T10's deployment keeps an agent's shell
+  off them by listing them, and the wrapper's name, as `hook_match` strings, which the file tools ignore.
+  Owed after this build, in dotfiles, before SP-T11 (SP-T11(0)): list the holders in the connection's
+  `deny_paths` as well (the `hook_match` strings stay: a raw substring also catches the wrapper's bare
+  name, which no path rule sees), and add `Grep` to the hook's matcher; until then the file tools and
+  content search still reach them.
 - PR4 "A query that touches no flagged object returns unchanged" — CARRIED-NARROWED: a query that calls a
   function or operator defined outside `pg_catalog` and not allowlisted, or that reads a statistics or
   credential catalog relation, is refused even when it touches no flagged object. Why: PRD R1's own
@@ -493,8 +626,8 @@ Trigger-source: fppfurtado/iris#73 · the case-study harness memory or session j
   or rule already defined in the database, and the body of an allowlisted function, either of which may move
   a value into a readable column.
 - PRD R7 "adds a second repository to the effort" — WIDER here, declared: the code lives in `cerberus`, and
-  deployment (SP-T10) lands small changes in the operator's dotfiles and loadout repositories and re-points
-  one credential file in a work repository.
+  deployment (SP-T10) lands small changes in the operator's dotfiles repository (v1.3: the loadout needed
+  none) and re-points one credential file in a work repository.
 - PRD open questions on J5's knowledge home, object identity and the judging of the RP-J5 rows — not
   answered here: they belong to the J5 build (fppfurtado/iris#73).
 - One Spec, not one per carrier: on this branch there is no iris carrier.
@@ -507,6 +640,15 @@ Trigger-source: fppfurtado/iris#73 · the case-study harness memory or session j
 - The plan-based relation check depends on `EXPLAIN (VERBOSE, FORMAT JSON)` naming every scanned relation.
   Measured on PostgreSQL 16 only; the case study's server versions are not recorded — SP-T11(a) runs the
   RP-J2 forms on the real replicas, and the fixture matrix adds any older major version found there.
+  Recorded at SP-T10 (2026-11-19, fppfurtado/cerberus#10; v1.3): the case study's servers are PostgreSQL
+  15 with LATIN1 encoding, so the suite runs on a PostgreSQL 15 fixture at SP-T11(0).
+- Observed at SP-T10 (2026-11-19, v1.3; source fppfurtado/cerberus#10): the two log-history databases are
+  primaries, so their connections are declared `client-requested`, not replicas (SP-T11(b) asserts it); the
+  tables and columns the policy names were found identical on the production replicas, the homologation
+  database and the test database, per #10's "the policy tables are identical" (whether row content was compared
+  is not recorded); one query took 4–7 s over the VPN, attributed to connection setup plus the catalog
+  closure, with no sample count or split of the two recorded — the Assumption on one connection per
+  invocation stands until SP-T11 measures a session's query loop.
 - Planning a query evaluates some functions at plan time. Mitigation: the function allowlist runs before
   `EXPLAIN`, inside the read-only transaction and the time bound.
 - The name-based column rule refuses a harmless same-named column of another table in the same query. Cost:
