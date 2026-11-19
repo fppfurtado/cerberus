@@ -34,7 +34,7 @@ from pathlib import Path
 from cerberus import config
 from cerberus.refusal import Refusal
 
-_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|\n&]")
+SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|\n&]")
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _AUTH_FAILURE = re.compile(
     r"password authentication failed|no password supplied|fe_sendauth|authentication failed",
@@ -187,7 +187,7 @@ def _is_cerberus(segment: str) -> bool:
 
 
 def _bash_denial(command: str, targets: list[_Target]) -> str | None:
-    for segment in _SEGMENT_SPLIT.split(command):
+    for segment in SEGMENT_SPLIT.split(command):
         for target in targets:
             if any(m in segment for m in target.matches) and not _is_cerberus(segment):
                 return target.pointer

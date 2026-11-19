@@ -67,13 +67,20 @@ def test_an_exact_list_does_not_match_by_substring(claude_dir: Path) -> None:
     "uv run cerberus hook claude-code",
     "/home/user/.local/bin/cerberus hook claude-code",
     "env FOO=1 cerberus hook claude-code",
+    # the deployment's guarded form, verbatim from the dotfiles settings template (Spec v1.4)
+    'test -x "/home/user/.local/bin/cerberus" || exit 0; exec "/home/user/.local/bin/cerberus" hook claude-code',
 ])
 def test_command_forms_that_run_the_hook_are_recognized(claude_dir: Path, command: str) -> None:
     write(claude_dir / "settings.json", settings(command={"type": "command", "command": command}))
     assert registration.report()["ok"] is True
 
 
-@pytest.mark.parametrize("command", ["cerberus doctor", "echo cerberus hook claude-code", "cerberus hook"])
+@pytest.mark.parametrize("command", [
+    "cerberus doctor",
+    "echo cerberus hook claude-code",
+    "cerberus hook",
+    'test -x "/home/user/.local/bin/cerberus" || exit 0; exec "/home/user/.local/bin/cerberus" doctor',
+])
 def test_other_commands_do_not_count(claude_dir: Path, command: str) -> None:
     write(claude_dir / "settings.json", settings(command={"type": "command", "command": command}))
     assert registration.report()["ok"] is False

@@ -13,7 +13,7 @@ import os
 import re
 from pathlib import Path
 
-from cerberus.hook import program_words
+from cerberus.hook import SEGMENT_SPLIT, program_words
 
 REQUIRED = (
     ("PreToolUse", "Bash"),
@@ -60,13 +60,17 @@ def matcher_selects(matcher: object, tool: str) -> bool:
 
 
 def runs_hook(command: object) -> bool:
+    """True when a segment of ``command`` runs ``cerberus hook claude-code`` (Spec v1.4)."""
     if not isinstance(command, str):
         return False
-    words = program_words(command)
-    if not words or Path(words[0]).name != "cerberus":
-        return False
-    rest = words[1:]
-    return any(rest[i:i + 2] == ["hook", "claude-code"] for i in range(len(rest)))
+    for segment in SEGMENT_SPLIT.split(command):
+        words = program_words(segment)
+        if not words or Path(words[0]).name != "cerberus":
+            continue
+        rest = words[1:]
+        if any(rest[i:i + 2] == ["hook", "claude-code"] for i in range(len(rest))):
+            return True
+    return False
 
 
 def _registered(settings: dict) -> set[tuple[str, str]]:

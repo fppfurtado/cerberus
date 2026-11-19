@@ -1,7 +1,7 @@
 # Spec: cerberus — the outside-iris carrier for sensitive database sources (first build)
 
 - Frozen at: 2026-11-15
-- Spec version: v1.3
+- Spec version: v1.4
 - Source: PRD `sensitive-database-source` v4 (frozen 2026-11-15; v4 adds this carrier to the candidate
   list and changes nothing else; lives in the iris repository,
   `prds/sensitive-database-source.PRD.md`), projected from Brief `sensitive-database-source` v3 (same
@@ -55,6 +55,11 @@
   SP-T11 gains step (0) — the deployment brought to v1.3, the operator's yes on the residuals v1.3 adds,
   the suite on PostgreSQL 15 — and asserts the two log-history primaries' guarantee in (b). Approval: the
   operator's merge of the pull request that carries this text.
+  v1.3 → v1.4 (2026-11-19), from SP-T11(0): `doctor`'s registration check reads a hook command by
+  segments, so the deployment's guarded form (`test -x <bin> || exit 0; exec <bin> hook claude-code`)
+  counts as a registration; v1.3 read only its first word and reported it unregistered (measured on the
+  deployed settings template). No other rule changes. Approval: the operator's merge of the pull request
+  that carries this text.
 - Branch taken (PRD v3 "Branches on J5 test 1"): test 1 ended without an answering verdict (attempt 1
   INCONCLUSIVE, attempt 2 HELD, attempt 3 designed and not funded; iris#34 comment of 2026-11-13) and no
   further test-1 budget is recorded, so the first build (PR1–PR6, PR8a, PR9–PR11, PR13) is entirely outside
@@ -312,8 +317,11 @@ timestamp, connection, script SHA-256, statement count.
   hook serves — the pre-tool event for `Bash`, `Read`, `Edit`, `Write`, `NotebookEdit` and `Grep`, and the
   failed-tool event for `Bash` (`MultiEdit` is not required: the current harness reference lists no such
   tool) — it reports whether a registered command runs the hook under a matcher that selects that tool. A
-  command runs the hook when its first program word, after environment assignments, `env` and `uv run`, is
-  named `cerberus` and the words `hook claude-code` follow. Matchers are read by the rules of the Claude
+  command runs the hook when one of its segments (split at `;`, `&&`, `||`, `|`, `&` and newlines, as the
+  hook splits a shell command) has, as its first program word after environment assignments, `env`,
+  `command`, `exec` and `uv run`, a word named `cerberus`, followed by the words `hook claude-code` (v1.4:
+  v1.3 read only the command's first word, so the deployment's guarded form, `test -x <bin> || exit 0;
+  exec <bin> hook claude-code`, read as unregistered). Matchers are read by the rules of the Claude
   Code hooks reference (read 2026-11-19): omitted, empty or `*` matches all; one made only of letters,
   digits, `_`, `-`, spaces, `,` and `|` is a list of exact names; anything else is an unanchored
   JavaScript regular expression, evaluated here with Python's `re.search` (a pattern Python cannot compile
@@ -455,7 +463,8 @@ timestamp, connection, script SHA-256, statement count.
   serves, whether the user or managed settings register `cerberus hook claude-code` under a matcher that
   selects it, and SHALL NOT report clean while one is missing or while those settings disable it" (v1.3;
   tests: settings with every pair; one missing `Grep`; a regex matcher; an omitted matcher; a command
-  through `uv run`; `disableAllHooks`; managed-only hooks; no settings at all); "WHEN a `deny_paths`
+  through `uv run`; the deployment's guarded form, verbatim (v1.4); `disableAllHooks`; managed-only hooks;
+  no settings at all); "WHEN a `deny_paths`
   entry is missing, sits inside a git working tree, or is a file readable by group or others, `cerberus
   doctor` SHALL NOT report clean"; "IF a `passfile` or `deny_paths` entry is neither absolute nor starts with
   `~`, THEN the system SHALL refuse the declaration as `config.invalid`" (v1.3) — depends on: SP-T1
