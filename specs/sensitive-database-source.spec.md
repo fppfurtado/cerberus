@@ -197,7 +197,9 @@ than declared) says why none was established.
 
 **Commit authorization record** (PR10(b)): one line appended to `~/.local/state/cerberus/commits.jsonl` —
 timestamp, connection, script SHA-256, statement count. The hash is of the file's own bytes, so it matches
-`sha256sum` of the authorized file, and the record names the encoding the script was read in (v1.5).
+`sha256sum` of the authorized file, and the record names the encoding the script was read in, by its
+resolved codec name (v1.5). The record is written before the commit: if it cannot be written, the script is
+rolled back, so no commit lands without its record and no refusal follows a commit (v1.5).
 
 ### Interfaces / contracts
 
@@ -238,13 +240,14 @@ timestamp, connection, script SHA-256, statement count. The hash is of the file'
   file as UTF-8 unless `--encoding <name>` names its encoding (v1.5: vendor scripts arrive in legacy
   single-byte encodings); a leading byte-order mark is dropped whenever the encoding is UTF-8, named or
   not. A file it cannot read is refused as `script.unreadable`, and one that does not decode, or an
-  unknown encoding name, as `script.encoding`, whose detail names the option. Only the UTF-8 default
+  unknown or non-text encoding name (`base64`), as `script.encoding`, whose detail names the option. Only the UTF-8 default
   catches a wrong guess: a single-byte encoding decodes any file, so a script saved in Windows-1252 and
   read as `latin1` runs with its bytes 0x80–0x9F turned into control characters, unrefused (the detail
   says so and suggests `cp1252` for Windows editors). The file's encoding is independent of the
   connection's client encoding, which governs what is sent: a statement holding a character the client
   encoding cannot represent is refused as `encoding.unrepresentable`, naming the encoding and the
-  character's position, never the character — on the read path too. It parses the whole script first and refuses, before connecting: any transaction-control statement (`BEGIN`, `COMMIT`, `END`,
+  character's index in the text being sent (the statement, or a name taken from it for a catalog lookup),
+  never the character — on the read path too. It parses the whole script first and refuses, before connecting: any transaction-control statement (`BEGIN`, `COMMIT`, `END`,
   `ROLLBACK`, `PREPARE TRANSACTION`, …; `SAVEPOINT` and `ROLLBACK TO` are allowed), any statement that cannot
   run inside a transaction or whose effect a rollback does not undo (`VACUUM`, `CREATE DATABASE`,
   `CREATE INDEX CONCURRENTLY`, `ALTER SYSTEM`, `COPY … PROGRAM`), denylisted functions, and client
@@ -576,7 +579,8 @@ timestamp, connection, script SHA-256, statement count. The hash is of the file'
   refuse with `script.unreadable`"; "IF a statement holds a character the client encoding cannot
   represent, THEN the system SHALL refuse with `encoding.unrepresentable`, naming no character"; "WHEN a
   commit is recorded, its hash SHALL equal the SHA-256 of the file's bytes and the record SHALL name the
-  encoding"; "IF `query`, `run-script`, `connections` or `doctor` raises an unexpected exception, THEN it
+  encoding, and IF the record cannot be written, THEN the script SHALL be rolled back"; "IF `query`,
+  `run-script`, `connections` or `doctor` raises an unexpected exception, THEN it
   SHALL print a refusal with rule `internal.error` naming only the exception class, and print no
   traceback" (tests: a Windows-1252 script with and without the option; a byte-order mark, defaulted and
   with `UTF8` named; an unknown encoding name; a missing file; a character LATIN1 lacks, on `query` and

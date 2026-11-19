@@ -83,8 +83,8 @@ def establish_guarantee(db: psycopg.Connection) -> dict[str, str]:
 def _unrepresentable(exc: UnicodeEncodeError) -> tuple[str, str]:
     return ("encoding.unrepresentable",
             f"the connection's client encoding ({exc.encoding}) cannot represent a character of the "
-            f"statement (position {exc.start}); replace that character, or declare a client encoding "
-            "that has it")
+            f"text being sent (character {exc.start} of the statement or of a name taken from it); "
+            "replace that character, or declare a client encoding that has it")
 
 
 class ReadSession:

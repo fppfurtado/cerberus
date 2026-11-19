@@ -261,8 +261,10 @@ def run_script(conn: Connection, script: str, *, commit: bool = False,
             if not confirm(conn):
                 raise Refusal("commit.not-confirmed",
                               "the confirmation did not match the connection name; rolled back")
+            # The authorization is recorded BEFORE the commit (Spec v1.5): a record that cannot be
+            # written rolls the script back, so a commit never lands without its record and a
+            # refusal never follows a commit.
+            _record_commit(conn, script, len(statements), source, encoding)
             session.commit_on_exit()
             committed = True
-    if committed:
-        _record_commit(conn, script, len(statements), source, encoding)
     return {"connection": conn.name, "committed": committed, "statements": outputs}

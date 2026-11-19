@@ -45,7 +45,7 @@ def _confirm_on_terminal(conn: config.Connection) -> bool:
     return sys.stdin.readline().strip() == conn.name
 
 
-def read_script(path: str, encoding: str | None) -> tuple[str, bytes]:
+def read_script(path: str, encoding: str | None) -> tuple[str, bytes, str]:
     """The script's text, decoded as declared (Spec v1.5): UTF-8 by default (a byte-order mark
     dropped), else ``--encoding``. A file that cannot be read or decoded is a named refusal."""
     try:
@@ -60,7 +60,11 @@ def read_script(path: str, encoding: str | None) -> tuple[str, bytes]:
                       f"unknown encoding {encoding!r} given to --encoding; name the one the file was "
                       "saved in (for example cp1252)") from None
     try:
-        return data.decode("utf-8-sig" if name == "utf-8" else name), data
+        return data.decode("utf-8-sig" if name == "utf-8" else name), data, name
+    except LookupError:  # a codec that is not a text encoding (base64, rot13, …)
+        raise Refusal("script.encoding",
+                      f"{encoding!r} given to --encoding is not a text encoding; name the one the file "
+                      "was saved in (for example cp1252)") from None
     except UnicodeDecodeError as exc:
         shown = encoding or "UTF-8"
         raise Refusal(
@@ -72,10 +76,10 @@ def read_script(path: str, encoding: str | None) -> tuple[str, bytes]:
 
 
 def _run_script(args: argparse.Namespace) -> int:
-    script, source = read_script(args.file, args.encoding)
+    script, source, encoding = read_script(args.file, args.encoding)
     confirm = _confirm_on_terminal if args.commit and sys.stdin.isatty() else None
     result = run_script(config.load(args.connection), script, commit=args.commit, confirm=confirm,
-                        verbose_errors=args.verbose_errors, source=source, encoding=args.encoding)
+                        verbose_errors=args.verbose_errors, source=source, encoding=encoding)
     print(_json(result))
     return 0
 
@@ -119,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     script.add_argument("connection")
     script.add_argument("file")
     script.add_argument("--encoding", metavar="NAME",
-                        help="the script file's encoding (default UTF-8), e.g. latin1 or cp1252")
+                        help="the script file's encoding (default UTF-8), e.g. cp1252 for Windows editors")
     script.add_argument("--commit", action="store_true",
                         help="commit instead of rolling back, after typing the connection name on a terminal")
     script.add_argument("--verbose-errors", action="store_true",
@@ -143,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     except Refusal as refusal:
         print(_json(refusal.as_dict()))
         return EXIT_REFUSED
-    except Exception as exc:  # noqa: BLE001 — Spec v1.5: never a traceback, never a message
+    except Exception as exc:  # noqa: BLE001 — Spec v1.5: no traceback, no message (interrupts excepted)
         if args.command == "hook":
             raise  # the hook's own contract: its output is the harness's, not a refusal object
         print(_json(Refusal("internal.error",

@@ -109,7 +109,7 @@ def test_a_script_not_in_utf8_is_refused_by_name_and_points_to_encoding(declared
     assert code == 3, out
     refusal = json.loads(out)
     assert refusal["rule"] == "script.encoding" and "--encoding" in refusal["detail"]
-    assert "Traceback" not in out
+    assert "cp1252" in refusal["detail"] and "single-byte" in refusal["detail"]
 
 
 def test_encoding_option_runs_a_legacy_script_rolled_back(declared, outside: Path) -> None:
@@ -131,6 +131,7 @@ def test_a_utf8_script_with_a_byte_order_mark_runs(declared, outside: Path) -> N
 
 @pytest.mark.parametrize("args,rule", [
     (["--encoding", "no-such-encoding"], "script.encoding"),
+    (["--encoding", "base64"], "script.encoding"),
     ([], "script.unreadable"),
 ])
 def test_bad_encoding_name_and_missing_file_are_named_refusals(declared, outside: Path, args, rule) -> None:

@@ -213,6 +213,18 @@ def test_commit_confirmed_on_a_terminal_commits_and_records_the_authorization(
     assert record["encoding"] == "utf-8"
 
 
+def test_a_record_that_cannot_be_written_rolls_the_commit_back(
+    writable, ledger: Cluster, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = tmp_path / "state-is-a-file"
+    state.write_text("not a directory")
+    monkeypatch.setenv("XDG_STATE_HOME", str(state))
+    path = script_file(tmp_path, "UPDATE app.ledger SET amount = 779 WHERE id = 2;")
+    code, out = run_on_terminal([CERBERUS, "run-script", "w", str(path), "--commit"], typed="w")
+    assert code == 3, out
+    assert (2, 779) not in ledger_rows(ledger)  # no commit without its authorization record
+
+
 def test_the_commit_record_hashes_the_file_bytes_and_names_its_encoding(
     writable, ledger: Cluster, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -226,3 +238,5 @@ def test_the_commit_record_hashes_the_file_bytes_and_names_its_encoding(
     [record] = [json.loads(line) for line in (state / "cerberus" / "commits.jsonl").read_text().splitlines()]
     assert record["script_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert record["encoding"] == "cp1252"
+    # the resolved codec name, whatever the operator's spelling
+
