@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pty
@@ -208,3 +209,20 @@ def test_commit_confirmed_on_a_terminal_commits_and_records_the_authorization(
     [record] = [json.loads(line) for line in (state / "cerberus" / "commits.jsonl").read_text().splitlines()]
     assert record["connection"] == "w" and record["statements"] == 1
     assert len(record["script_sha256"]) == 64 and "time" in record
+    assert record["script_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()  # `sha256sum <file>`
+    assert record["encoding"] == "utf-8"
+
+
+def test_the_commit_record_hashes_the_file_bytes_and_names_its_encoding(
+    writable, ledger: Cluster, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state))
+    path = tmp_path / "vendor.sql"
+    path.write_bytes("-- Município\nUPDATE app.ledger SET amount = 778 WHERE id = 2;\n".encode("cp1252"))
+    code, out = run_on_terminal([CERBERUS, "run-script", "w", str(path), "--commit", "--encoding", "cp1252"],
+                                typed="w")
+    assert code == 0, out
+    [record] = [json.loads(line) for line in (state / "cerberus" / "commits.jsonl").read_text().splitlines()]
+    assert record["script_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert record["encoding"] == "cp1252"

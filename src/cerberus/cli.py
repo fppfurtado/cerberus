@@ -6,6 +6,7 @@ Exit status: 0 success, 1 a check that did not come back clean (``doctor``), 3 a
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import sys
 
@@ -44,7 +45,7 @@ def _confirm_on_terminal(conn: config.Connection) -> bool:
     return sys.stdin.readline().strip() == conn.name
 
 
-def read_script(path: str, encoding: str | None) -> str:
+def read_script(path: str, encoding: str | None) -> tuple[str, bytes]:
     """The script's text, decoded as declared (Spec v1.5): UTF-8 by default (a byte-order mark
     dropped), else ``--encoding``. A file that cannot be read or decoded is a named refusal."""
     try:
@@ -52,25 +53,29 @@ def read_script(path: str, encoding: str | None) -> str:
     except OSError as exc:
         raise Refusal("script.unreadable",
                       f"cannot read the script file ({type(exc).__name__})") from None
-    name = encoding or "utf-8-sig"
     try:
-        return data.decode(name)
+        name = codecs.lookup(encoding or "utf-8").name
     except LookupError:
-        raise Refusal("script.encoding", f"unknown encoding {encoding!r}") from None
+        raise Refusal("script.encoding",
+                      f"unknown encoding {encoding!r} given to --encoding; name the one the file was "
+                      "saved in (for example cp1252)") from None
+    try:
+        return data.decode("utf-8-sig" if name == "utf-8" else name), data
     except UnicodeDecodeError as exc:
         shown = encoding or "UTF-8"
         raise Refusal(
             "script.encoding",
-            f"the script is not valid {shown} (byte {exc.start}); pass --encoding <name> "
-            "(for example latin1 or cp1252) to read it in its own encoding, or convert it to UTF-8",
+            f"the script is not valid {shown} (byte {exc.start}); pass --encoding <name> naming the "
+            "encoding the file was saved in (Windows editors: cp1252), or convert it to UTF-8. A "
+            "single-byte encoding decodes any file, so a wrong name is not caught",
         ) from None
 
 
 def _run_script(args: argparse.Namespace) -> int:
-    script = read_script(args.file, args.encoding)
+    script, source = read_script(args.file, args.encoding)
     confirm = _confirm_on_terminal if args.commit and sys.stdin.isatty() else None
     result = run_script(config.load(args.connection), script, commit=args.commit, confirm=confirm,
-                        verbose_errors=args.verbose_errors)
+                        verbose_errors=args.verbose_errors, source=source, encoding=args.encoding)
     print(_json(result))
     return 0
 

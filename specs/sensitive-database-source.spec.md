@@ -66,9 +66,10 @@
   v1.4 → v1.5 (2026-11-19), from SP-T11's replay (fppfurtado/cerberus#13): a vendor script in a legacy
   single-byte encoding crashed `run-script` with a traceback, before connecting. The script file is now
   decoded as declared — UTF-8 by default (a leading byte-order mark dropped), or the encoding `--encoding`
-  names — and a file that cannot be read or decoded is a named refusal; across the CLI an unexpected
-  failure is a refusal that names only its exception class, never a traceback (the hook keeps its own
-  output contract). No rule of the gate changes. Approval: the operator's merge of the pull request that
+  names — and a file that cannot be read or decoded is a named refusal; a statement with a character the
+  client encoding lacks is refused as `encoding.unrepresentable`; the commit record hashes the file's
+  bytes and names the encoding; and in the four printing commands an unexpected exception is a refusal
+  that names only its class (an interrupt and the hook excepted). No rule of the gate changes. Approval: the operator's merge of the pull request that
   carries this text.
 - Branch taken (PRD v3 "Branches on J5 test 1"): test 1 ended without an answering verdict (attempt 1
   INCONCLUSIVE, attempt 2 HELD, attempt 3 designed and not funded; iris#34 comment of 2026-11-13) and no
@@ -195,7 +196,8 @@ after step 3 of the read path; a refusal before it (custody, an unreachable serv
 than declared) says why none was established.
 
 **Commit authorization record** (PR10(b)): one line appended to `~/.local/state/cerberus/commits.jsonl` —
-timestamp, connection, script SHA-256, statement count.
+timestamp, connection, script SHA-256, statement count. The hash is of the file's own bytes, so it matches
+`sha256sum` of the authorized file, and the record names the encoding the script was read in (v1.5).
 
 ### Interfaces / contracts
 
@@ -233,11 +235,16 @@ timestamp, connection, script SHA-256, statement count.
   listed. Statistics relations that expose column samples (`pg_stats`, `pg_statistic`, extended statistics)
   and credential catalogs are in a built-in `deny_relations` list.
 - **Rollback-only scripts (PR10).** `run-script` accepts only a `writable` connection. It reads the script
-  file as UTF-8 (a leading byte-order mark dropped) unless `--encoding <name>` names its encoding (v1.5:
-  vendor scripts arrive in legacy single-byte encodings); a file it cannot read is refused as
-  `script.unreadable`, and one that does not decode, or an unknown encoding name, as `script.encoding`,
-  whose detail names the option. The file's encoding is independent of the connection's client encoding,
-  which still governs what is sent. It parses the whole script first and refuses, before connecting: any transaction-control statement (`BEGIN`, `COMMIT`, `END`,
+  file as UTF-8 unless `--encoding <name>` names its encoding (v1.5: vendor scripts arrive in legacy
+  single-byte encodings); a leading byte-order mark is dropped whenever the encoding is UTF-8, named or
+  not. A file it cannot read is refused as `script.unreadable`, and one that does not decode, or an
+  unknown encoding name, as `script.encoding`, whose detail names the option. Only the UTF-8 default
+  catches a wrong guess: a single-byte encoding decodes any file, so a script saved in Windows-1252 and
+  read as `latin1` runs with its bytes 0x80–0x9F turned into control characters, unrefused (the detail
+  says so and suggests `cp1252` for Windows editors). The file's encoding is independent of the
+  connection's client encoding, which governs what is sent: a statement holding a character the client
+  encoding cannot represent is refused as `encoding.unrepresentable`, naming the encoding and the
+  character's position, never the character — on the read path too. It parses the whole script first and refuses, before connecting: any transaction-control statement (`BEGIN`, `COMMIT`, `END`,
   `ROLLBACK`, `PREPARE TRANSACTION`, …; `SAVEPOINT` and `ROLLBACK TO` are allowed), any statement that cannot
   run inside a transaction or whose effect a rollback does not undo (`VACUUM`, `CREATE DATABASE`,
   `CREATE INDEX CONCURRENTLY`, `ALTER SYSTEM`, `COPY … PROGRAM`), denylisted functions, and client
@@ -422,10 +429,11 @@ timestamp, connection, script SHA-256, statement count.
   never a row value. On the read path a server error is truncated to its SQLSTATE and first line (a query
   there that names a non-listed column is refused before it runs); in a script, where a statement may write
   a restricted column, it shows its SQLSTATE and condition name only (v1.1). `--verbose-errors` shows the
-  full text. Any other failure of a command that prints a result or refusal (`query`, `run-script`,
-  `connections`, `doctor`) is a refusal with rule `internal.error` that names only the exception class:
-  never a traceback, never the exception's message, which can quote a value (v1.5). The hook is outside
-  this rule: its output belongs to the harness.
+  full text. Any other exception in a command that prints a result or refusal (`query`, `run-script`,
+  `connections`, `doctor`) is a refusal with rule `internal.error` that names only the exception class —
+  no traceback, not the exception's message, which can quote a value (v1.5). Outside it: an interrupt
+  (Ctrl-C), which Python reports with a traceback of frames, not values; a failure while printing the
+  refusal itself; and the hook, whose output belongs to the harness.
 - **Residual risks stated to the operator at M5 (PRD R1).** No server-side backstop exists for PR4. Known
   residuals of this design: a built-in function that this Spec's denylist misses; a relation reached only
   through a path none of the three sources shows (for example a function inside an allowlisted function); an implicit cast or a
@@ -563,11 +571,17 @@ timestamp, connection, script SHA-256, statement count.
   authorization record (time, connection, script hash)"; "IF the connection is not `writable`, THEN
   `run-script` SHALL refuse"; v1.5: "IF the script file does not decode as UTF-8 and no `--encoding` is
   given, THEN the system SHALL refuse with `script.encoding` before connecting, naming the option"; "WHEN
-  `--encoding` names the file's encoding, the system SHALL run it as any script"; "IF the file cannot be
-  read, THEN the system SHALL refuse with `script.unreadable`"; "IF a command fails unexpectedly, THEN it
-  SHALL print a refusal with rule `internal.error` naming only the exception class, and no traceback"
-  (tests: a Windows-1252 script with and without the option, a byte-order mark, an unknown encoding name,
-  a missing file, an injected failure whose message carries a marker that SHALL be absent) — depends on:
+  `--encoding` names an encoding the file decodes in, the system SHALL run the decoded text as any script"
+  (a wrong single-byte name is not detected, above); "IF the file cannot be read, THEN the system SHALL
+  refuse with `script.unreadable`"; "IF a statement holds a character the client encoding cannot
+  represent, THEN the system SHALL refuse with `encoding.unrepresentable`, naming no character"; "WHEN a
+  commit is recorded, its hash SHALL equal the SHA-256 of the file's bytes and the record SHALL name the
+  encoding"; "IF `query`, `run-script`, `connections` or `doctor` raises an unexpected exception, THEN it
+  SHALL print a refusal with rule `internal.error` naming only the exception class, and print no
+  traceback" (tests: a Windows-1252 script with and without the option; a byte-order mark, defaulted and
+  with `UTF8` named; an unknown encoding name; a missing file; a character LATIN1 lacks, on `query` and
+  `run-script`; the commit record of a Windows-1252 file; an injected failure in each of the four commands,
+  whose message's marker SHALL be absent from stdout and stderr; the hook re-raising) — depends on:
   SP-T3, SP-T4
 - SP-T9: `cerberus hook claude-code` — implements PR9 — acceptance (EARS; v1.3 states the whole list, v1.2's
   "names no declared connection … answer nothing" and "missing or unreadable … block nothing" clauses are

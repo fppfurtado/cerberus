@@ -20,6 +20,7 @@ CERBERUS = str(Path(sys.executable).parent / "cerberus")
 def run(args: list[str], cwd: Path) -> tuple[int, str]:
     proc = subprocess.run([CERBERUS, *args], cwd=cwd, env=dict(os.environ),
                           capture_output=True, text=True, timeout=60)
+    assert "Traceback" not in proc.stderr, proc.stderr  # Spec v1.5: no command prints a traceback
     return proc.returncode, proc.stdout
 
 
@@ -138,19 +139,67 @@ def test_bad_encoding_name_and_missing_file_are_named_refusals(declared, outside
         path.write_text("select 1;")
     code, out = run(["run-script", "scratchdb", str(path), *args], cwd=outside)
     assert code == 3, out
-    assert json.loads(out)["rule"] == rule
+    refusal = json.loads(out)
+    assert refusal["rule"] == rule
+    if rule == "script.encoding":
+        assert "--encoding" in refusal["detail"]
 
 
-def test_an_unexpected_failure_is_a_refusal_naming_only_the_exception_class(monkeypatch, capsys) -> None:
+@pytest.mark.parametrize("handler,argv", [
+    ("_connections", ["connections"]),
+    ("_query", ["query", "x", "select 1"]),
+    ("_run_script", ["run-script", "x", "f.sql"]),
+    ("_doctor", ["doctor"]),
+])
+def test_an_unexpected_failure_is_a_refusal_naming_only_the_exception_class(
+    monkeypatch, capsys, handler, argv
+) -> None:
     from cerberus import cli
 
     def boom(_args):
         raise ValueError("a message that could quote secret-value-123")
 
-    monkeypatch.setattr(cli, "_connections", boom)
-    code = cli.main(["connections"])
-    out = capsys.readouterr().out
+    monkeypatch.setattr(cli, handler, boom)
+    code = cli.main(argv)
+    captured = capsys.readouterr()
     assert code == 3
-    refusal = json.loads(out)
+    refusal = json.loads(captured.out)
     assert refusal["rule"] == "internal.error" and "ValueError" in refusal["detail"]
-    assert "secret-value-123" not in out
+    assert "secret-value-123" not in captured.out + captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_the_hook_keeps_its_own_contract_on_an_unexpected_failure(monkeypatch) -> None:
+    from cerberus import cli
+
+    def boom(_args):
+        raise ValueError("x")
+
+    monkeypatch.setattr(cli, "_hook", boom)
+    with pytest.raises(ValueError):
+        cli.main(["hook", "claude-code"])
+
+
+def test_utf8_named_explicitly_still_drops_a_byte_order_mark(declared, outside: Path) -> None:
+    path = outside / "bom.sql"
+    path.write_bytes(LEGACY_SCRIPT.encode("utf-8-sig"))
+    code, out = run(["run-script", "scratchdb", str(path), "--encoding", "UTF8"], cwd=outside)
+    assert code == 0, out
+
+
+def test_a_character_the_client_encoding_cannot_carry_is_a_named_refusal(
+    preconditions: Cluster, declare, tmp_path: Path, capsys
+) -> None:
+    from cerberus import cli
+
+    server = dataclasses.replace(preconditions.primary, dbname="latin1db")
+    declare("l", server, "client-requested", 'client_encoding = "LATIN1"')
+    declare("lw", server, "writable", 'client_encoding = "LATIN1"')
+    assert cli.main(["query", "l", "select 'it’s' as q"]) == 3
+    refusal = json.loads(capsys.readouterr().out)
+    assert refusal["rule"] == "encoding.unrepresentable" and "LATIN" in refusal["detail"].upper()
+    script = tmp_path / "vendor.sql"
+    script.write_bytes("-- it’s the vendor's\nselect 'it’s' as q;\n".encode("cp1252"))
+    assert cli.main(["run-script", "lw", str(script), "--encoding", "cp1252"]) == 3
+    out = capsys.readouterr().out
+    assert json.loads(out)["rule"] == "encoding.unrepresentable" and "’" not in out
