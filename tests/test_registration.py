@@ -63,25 +63,47 @@ def test_an_exact_list_does_not_match_by_substring(claude_dir: Path) -> None:
     assert report["registered"]["PreToolUse:Edit"] is True
 
 
-@pytest.mark.parametrize("command", [
+@pytest.fixture
+def binary(tmp_path: Path) -> Path:
+    """An executable named cerberus at an absolute path, as the deployment installs it."""
+    path = tmp_path / "bin" / "cerberus"
+    path.parent.mkdir()
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
+@pytest.mark.parametrize("template", [
     "uv run cerberus hook claude-code",
-    "/home/user/.local/bin/cerberus hook claude-code",
+    "{bin} hook claude-code",
     "env FOO=1 cerberus hook claude-code",
     # the deployment's guarded form, verbatim from the dotfiles settings template (Spec v1.4)
-    'test -x "/home/user/.local/bin/cerberus" || exit 0; exec "/home/user/.local/bin/cerberus" hook claude-code',
+    'test -x "{bin}" || exit 0; exec "{bin}" hook claude-code',
 ])
-def test_command_forms_that_run_the_hook_are_recognized(claude_dir: Path, command: str) -> None:
+def test_command_forms_that_run_the_hook_are_recognized(claude_dir: Path, binary: Path, template: str) -> None:
+    command = template.format(bin=binary)
     write(claude_dir / "settings.json", settings(command={"type": "command", "command": command}))
     assert registration.report()["ok"] is True
 
 
-@pytest.mark.parametrize("command", [
+@pytest.mark.parametrize("template", [
     "cerberus doctor",
     "echo cerberus hook claude-code",
     "cerberus hook",
-    'test -x "/home/user/.local/bin/cerberus" || exit 0; exec "/home/user/.local/bin/cerberus" doctor',
+    "cerberus query x hook claude-code",
+    'test -x "{bin}" || exit 0; exec "{bin}" doctor',
+    # the guarded form whose binary is gone runs `exit 0`: the hook never runs (Spec v1.4)
+    'test -x "{missing}" || exit 0; exec "{missing}" hook claude-code',
 ])
-def test_other_commands_do_not_count(claude_dir: Path, command: str) -> None:
+def test_other_commands_do_not_count(claude_dir: Path, binary: Path, template: str) -> None:
+    command = template.format(bin=binary, missing=binary.parent / "gone" / "cerberus")
+    write(claude_dir / "settings.json", settings(command={"type": "command", "command": command}))
+    assert registration.report()["ok"] is False
+
+
+def test_a_non_executable_binary_does_not_count(claude_dir: Path, binary: Path) -> None:
+    binary.chmod(0o644)
+    command = f'test -x "{binary}" || exit 0; exec "{binary}" hook claude-code'
     write(claude_dir / "settings.json", settings(command={"type": "command", "command": command}))
     assert registration.report()["ok"] is False
 
