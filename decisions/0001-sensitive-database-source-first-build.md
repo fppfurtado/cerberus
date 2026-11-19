@@ -107,6 +107,22 @@ purpose is refused; it is a job for a person with a direct client, not for the a
 residual left is code the statements do not name (a trigger or rule in the database, an allowlisted
 function's body). Decided by the operator's delegation (2026-11-15); amended into the Spec as v1.1.
 
+## D13 — The hook's protected paths and `doctor`'s registration check (Spec v1.3)
+
+From SP-T10's deployment and its review (#6, #9, #10). The hook protects a set of paths, not one file:
+each connection's `passfile` and `deny_paths`, plus the default password file path always, so a broken
+connections file still guards the usual place. The shell rule checks the whole command text, not each
+segment (D7's segments serve the host rule and its `cerberus` exemption; a path is denied in a
+`cerberus` invocation too, and `cd <dir> && cat <file>` spans two segments). The path check runs
+before the host check, so a command that does both gets the credential reason. `MultiEdit` stays in
+the file-tool set, though the current harness reference lists no such tool: denying a tool that never
+comes costs nothing. `doctor` reads matchers with Python's `re`, not a JavaScript engine: the matchers
+in use are alternations and anchors, which both read the same, and a second engine is a dependency for
+no measured case. With an invalid declaration the hook reads the raw TOML leniently instead of going
+silent: v1.2's silence left the password file readable exactly when every `cerberus` command refused,
+the moment an agent is likeliest to reach for a direct client. Decided by the agent on the operator's
+go-ahead for the batch (2026-11-19); amended into the Spec as v1.3.
+
 ## Consequence recorded — every `information_schema` view is refused
 
 Those views call `information_schema._pg_*` functions, which live outside `pg_catalog`, so the closure's

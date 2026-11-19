@@ -27,6 +27,15 @@ def connections_file() -> Path:
     return config_dir() / "connections.toml"
 
 
+def default_passfile() -> Path:
+    return config_dir() / "pgpass"
+
+
+def is_anchored(path: str) -> bool:
+    """A ``deny_paths`` entry must not depend on a working directory: absolute, or under ``~``."""
+    return path.startswith("/") or path == "~" or path.startswith("~/")
+
+
 @dataclass(frozen=True)
 class Connection:
     name: str
@@ -43,6 +52,7 @@ class Connection:
     deny_relations: frozenset[str] = frozenset()
     columns: dict[str, frozenset[str]] = field(default_factory=dict)
     hook_match: tuple[str, ...] = ()
+    deny_paths: tuple[Path, ...] = ()
 
 
 def _load_raw() -> dict:
@@ -84,11 +94,19 @@ def _parse(name: str, raw: dict) -> Connection:
             raise Refusal("config.invalid", f"connection {name!r}: 'search_path' must be a list of str")
         search_path = tuple(search_path)
     passfile = raw.get("passfile")
-    if passfile is not None and not isinstance(passfile, str):
-        raise Refusal("config.invalid", f"connection {name!r}: 'passfile' must be a str")
+    if passfile is not None and not (isinstance(passfile, str) and is_anchored(passfile)):
+        raise Refusal("config.invalid", f"connection {name!r}: 'passfile' must be an absolute or ~/ path")
     hook_match = raw.get("hook_match", [])
     if not isinstance(hook_match, list) or not all(isinstance(m, str) and m for m in hook_match):
         raise Refusal("config.invalid", f"connection {name!r}: 'hook_match' must be a list of str")
+    deny_paths = raw.get("deny_paths", [])
+    if not isinstance(deny_paths, list) or not all(
+        isinstance(d, str) and is_anchored(d) for d in deny_paths
+    ):
+        raise Refusal(
+            "config.invalid",
+            f"connection {name!r}: 'deny_paths' must be a list of absolute or ~/ paths",
+        )
     policy = raw.get("policy", {})
     if not isinstance(policy, dict):
         raise Refusal("config.invalid", f"connection {name!r}: 'policy' must be a table")
@@ -123,12 +141,19 @@ def _parse(name: str, raw: dict) -> Connection:
         timeout_ms=timeout_ms,
         client_encoding=encoding,
         search_path=search_path,
-        passfile=Path(passfile).expanduser() if passfile else config_dir() / "pgpass",
+        passfile=Path(passfile).expanduser() if passfile else default_passfile(),
         allow_functions=frozenset(allow),
         deny_relations=frozenset(deny),
         columns={table: frozenset(cols) for table, cols in columns.items()},
         hook_match=tuple(hook_match),
+        deny_paths=tuple(Path(d).expanduser() for d in deny_paths),
     )
+
+
+def load_raw_connections() -> dict:
+    """The ``[connection.NAME]`` tables as parsed TOML, unvalidated (the hook's fallback)."""
+    raw = _load_raw().get("connection", {})
+    return raw if isinstance(raw, dict) else {}
 
 
 def load_all() -> dict[str, Connection]:

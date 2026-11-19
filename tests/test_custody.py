@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cerberus import cli, config, custody
+from cerberus import cli, config, custody, registration
 from cerberus.refusal import Refusal
 from cerberus.session import open_connection
 from conftest import Cluster
@@ -24,7 +24,20 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (home / ".config" / "cerberus").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(registration, "MANAGED_SETTINGS", (tmp_path / "managed-settings.json",))
     return home
+
+
+def register_hook(home: Path) -> None:
+    """The deployment's registration, as the dotfiles settings template writes it."""
+    command = {"type": "command", "command": "cerberus hook claude-code"}
+    settings = {"hooks": {
+        "PreToolUse": [{"matcher": "Bash|Read|Edit|Write|NotebookEdit|Grep", "hooks": [command]}],
+        "PostToolUseFailure": [{"matcher": "Bash", "hooks": [command]}],
+    }}
+    (home / ".claude").mkdir(exist_ok=True)
+    (home / ".claude" / "settings.json").write_text(json.dumps(settings))
 
 
 def write_connections(home: Path, body: str) -> None:
@@ -215,6 +228,7 @@ def test_doctor_is_clean_when_custody_holds(
 ) -> None:
     write_secret_file(home / ".config" / "cerberus" / "pgpass", [pass_line(cluster)])
     declare_primary(home, cluster)
+    register_hook(home)
     code, report, raw = run_doctor(capsys)
     assert code == 0, raw
     assert report["clean"] is True
@@ -242,3 +256,54 @@ def test_password_file_parsing_handles_escapes(tmp_path: Path) -> None:
     write_secret_file(f, [r"h\:x:5432:*:u:pa\:ss\\word", "# comment", ""])
     [entry] = custody.read_passfile(f)
     assert (entry.host, entry.dbname, entry.password) == ("h:x", "*", "pa:ss\\word")
+
+
+def test_doctor_reports_other_holders_and_flags_one_in_a_working_tree_or_open_to_others(
+    home: Path, cluster: Cluster, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    write_secret_file(home / ".config" / "cerberus" / "pgpass", [pass_line(cluster)])
+    safe = home / "tools" / "wrapper.env"
+    write_secret_file(safe, ["PW=x"])
+    loose = home / "tools" / "loose.env"
+    write_secret_file(loose, ["PW=x"])
+    os.chmod(loose, 0o644)
+    tree = tmp_path / "repo"
+    (tree / ".git").mkdir(parents=True)
+    write_secret_file(tree / ".env", ["PW=x"])
+    declare_primary(home, cluster)
+    path = home / ".config" / "cerberus" / "connections.toml"
+    path.write_text(path.read_text().replace(
+        "[connection.synth]", f'[connection.synth]\ndeny_paths = ["{safe}", "{loose}", "{tree / ".env"}"]', 1))
+    register_hook(home)
+    code, report, raw = run_doctor(capsys)
+    assert code == 1, raw
+    by_location = {h["location"]: h for h in report["other_holders"]}
+    assert by_location[str(safe)]["ok"] is True
+    assert by_location[str(loose)]["problems"] == ["readable by group or others"]
+    assert by_location[str(tree / ".env")]["problems"] == ["inside a git working tree"]
+    assert SECRET not in raw
+
+
+def test_doctor_is_not_clean_while_the_hook_is_unregistered(
+    home: Path, cluster: Cluster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_secret_file(home / ".config" / "cerberus" / "pgpass", [pass_line(cluster)])
+    declare_primary(home, cluster)
+    code, report, _ = run_doctor(capsys)
+    assert code == 1
+    assert report["hook"]["ok"] is False
+
+
+def test_a_relative_passfile_makes_the_declaration_invalid(home: Path) -> None:
+    write_connections(home, """
+[connection.x]
+host = "h.example.invalid"
+port = 5432
+dbname = "d"
+user = "u"
+class = "client-requested"
+passfile = "pgpass"
+""")
+    with pytest.raises(Refusal) as exc:
+        config.load_all()
+    assert exc.value.rule == "config.invalid" and "passfile" in exc.value.detail
