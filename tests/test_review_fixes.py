@@ -320,11 +320,13 @@ def test_reshaping_a_flagged_child_directly_is_refused(reshaper, script: str) ->
 
 def test_renaming_the_schema_of_a_flagged_table_is_caught_at_the_next_statement(reshaper) -> None:
     script = "ALTER SCHEMA app RENAME TO app2;\nSELECT secret FROM app2.vault;"
-    assert refused(run_script, reshaper, script).rule == "policy.key-unresolved"
+    refusal = refused(run_script, reshaper, script)
+    assert refusal.rule == "policy.key-unresolved"
+    assert "statement 2" in refusal.detail
 
 
 def test_a_subquery_reading_the_outer_excluded_row_is_over_blocked(writable) -> None:
-    # Deliberate (Spec v1.2, D12): the EXCLUDED exemption holds at the ON CONFLICT clause's own level only,
+    # Deliberate (Spec v1.2; recorded in D12): the EXCLUDED exemption holds at the ON CONFLICT clause's own level only,
     # so a subquery that reads the outer proposed row is refused although it reads no stored value.
     script = ("INSERT INTO app.vault VALUES (1,'x','y') ON CONFLICT (id) DO UPDATE "
               "SET label = (SELECT excluded.secret);")

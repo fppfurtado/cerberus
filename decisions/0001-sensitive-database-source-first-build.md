@@ -96,8 +96,11 @@ an `EXPLAIN` or a filter (`EXCLUDED.<column>` in `ON CONFLICT` is the statement'
 and passes). Reshaping a flagged relation (any `ALTER TABLE`, rename or `SET SCHEMA` naming one: a column rename, a
 detached partition, dropped inheritance) and code the script defines (functions, procedures, triggers,
 rules, event triggers) are refused too: each moved the value without an expression reading it (review
-B9–B11). Inside `ON CONFLICT`, only `EXCLUDED.<column>` at the clause's own level is the proposed row; in a
-subquery `excluded` can alias a stored table (B12). Cost: a script that copies a restricted column on
+B9–B11; event triggers are refused by extension, not measured). Inside `ON CONFLICT`, only
+`EXCLUDED.<column>` at the clause's own level is the proposed row; in a subquery `excluded` can alias a
+stored table (B12). The check does not tell the two apart inside a subquery, so a subquery reading the
+outer proposed row's restricted column is refused too: an over-block, accepted because writing that
+value at the clause's own level does the same job (Spec v1.2). Cost: a script that copies a restricted column on
 purpose is refused; it is a job for a person with a direct client, not for the agent's carrier. The
 residual left is code the statements do not name (a trigger or rule in the database, an allowlisted
 function's body). Decided by the operator's delegation (2026-11-15); amended into the Spec as v1.1.

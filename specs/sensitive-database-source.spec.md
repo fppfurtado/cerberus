@@ -20,22 +20,24 @@
   still write one, as a `SET` or `INSERT` target); v1 checked only statements that return rows, and a
   `CREATE TABLE … AS SELECT <restricted>` followed by a read of the copy returned the value in one script
   (measured on the fixture); reshaping a flagged relation (a column rename, a detached partition, dropped
-  inheritance) and code the script defines (functions, procedures, triggers, event triggers, rules) are
-  refused for the same reason (each measured to move the value). The
+  inheritance) and code the script defines (functions, procedures, triggers, rules) are refused for the same
+  reason (each measured to move the value; event triggers are refused by extension, not measured). The
   residual in Deliberate exclusions narrows accordingly and joins the M5 list. (2) Cross-cutting,
   errors: in scripts a server error shows its SQLSTATE and condition name only; v1's "SQLSTATE and first line"
   quoted a restricted value (`UPDATE … SET id = secret::int`, measured). Approval: the operator delegated the
   decision ("Delego as três decisões", 2026-11-15); decided by the agent with the reasoning stated in the
   session and in `decisions/0001` D11–D12.
   v1.1 → v1.2 (2026-11-19), from the build's ledger and the final review (fppfurtado/cerberus#5, #4).
-  (1) The M5 residual list gains two residuals found in the first build and left out of v1.1: an operator
-  the parser gives no name (the `BETWEEN` family), and a statement only the parser's newer grammar
-  accepts. (2) Choices: the `pglast` claim "the gate and the server cannot disagree" is qualified to the
+  (1) The M5 residual list gains two residuals found in the first build and left out of v1.1: a comparison
+  the server resolves by type where the query names no operator (the class of the `BETWEEN` case #5
+  named; its review found `CASE`, `GREATEST`/`LEAST` and implicit sort and equality operators in it), and
+  the grammar-version gap between the parser and the server. (2) Choices: the `pglast` claim "the gate and the server cannot disagree" is qualified to the
   grammar version, and the `psycopg` claim "encodes per the connection's client encoding" is qualified to
   exclude its JSON loader (fppfurtado/cerberus#7, reported upstream as psycopg/psycopg#1504). (3) Records:
-  the v1.1 entry above now names event triggers, as the body and D12 already did, and the body states the
-  `EXCLUDED` exemption's scope, until now in D12 only. No rule of the gate changes; the code is untouched.
-  Approval: pending — the operator's review of the pull request that carries this text.
+  the v1.1 entry above now names event triggers, as the body and D12 already did, marked as refused by
+  extension, not measured; the body states the `EXCLUDED` exemption's scope, until now in D12 only, and
+  D12 records the over-block it costs. No rule of the gate changes; the code is untouched. Approval: the
+  operator's merge of the pull request that carries this text.
 - Branch taken (PRD v3 "Branches on J5 test 1"): test 1 ended without an answering verdict (attempt 1
   INCONCLUSIVE, attempt 2 HELD, attempt 3 designed and not funded; iris#34 comment of 2026-11-13) and no
   further test-1 budget is recorded, so the first build (PR1–PR6, PR8a, PR9–PR11, PR13) is entirely outside
@@ -273,8 +275,9 @@ timestamp, connection, script SHA-256, statement count.
 - **`pglast` (the PostgreSQL parser as a library) over `sqlglot`.** `pglast` is PostgreSQL's own grammar, so
   the gate and the server agree on what a statement is, within one grammar version (v1.2: `pglast` 8.8
   parses the PostgreSQL 18 grammar and older servers run older ones; a statement only the newer grammar
-  accepts passes the gate's parse and fails on the server as `server.error` — no bypass found this way,
-  stated at M5); `sqlglot` is an independent grammar whose
+  accepts passes the gate's parse and fails on the server as `server.error`; text both grammars accept
+  but parse differently was not searched for; both stated at M5, re-checked in SP-T11 against the
+  replicas' versions); `sqlglot` is an independent grammar whose
   authors of a sibling project document edge-case disagreement. Retrieved 2026-11-15: `pglast` 8.8
   (2026-11-13, PostgreSQL 18 grammar) on PyPI. Pin an exact version (PRD R2: an upstream project broke on an
   unpinned-then-vanished parser release).
@@ -306,10 +309,13 @@ timestamp, connection, script SHA-256, statement count.
 - **Residual risks stated to the operator at M5 (PRD R1).** No server-side backstop exists for PR4. Known
   residuals of this design: a built-in function that this Spec's denylist misses; a relation reached only
   through a path none of the three sources shows (for example a function inside an allowlisted function); an implicit cast or a
-  user-defined type's output function; an operator the parser gives no name — `BETWEEN`, `NOT BETWEEN`,
-  `BETWEEN SYMMETRIC`, whose comparisons the server resolves by type, so on a user-defined type they may
-  reach a user-defined operator the allowlist never sees (v1.2); a statement only the parser's newer
-  grammar accepts, which fails on the server instead of at the gate (v1.2); side channels through timing or
+  user-defined type's output function; a comparison the server resolves by type where the query names no
+  operator — `BETWEEN` in its four kinds (the parser records the keyword, not an operator, so the gate
+  does not check it), simple `CASE`, `GREATEST`/`LEAST`, and the sort and equality operators of `ORDER BY`,
+  `DISTINCT`, `GROUP BY`, set operations and `USING`/`NATURAL` joins — which on a user-defined type may
+  reach a user-defined operator the allowlist never sees (v1.2); the grammar-version gap: a statement only
+  the parser's newer grammar accepts fails on the server instead of at the gate, and text both grammars
+  accept but parse differently was not searched for (v1.2); side channels through timing or
   error text; sequence values consumed
   by a rolled-back script; on a `writable` connection, code a script's statements do not name — a trigger
   or rule already defined in the database, or an allowlisted function's body — moving a value into a
