@@ -174,13 +174,17 @@ def state_dir() -> Path:
     return Path(base).expanduser() / "cerberus"
 
 
-def _record_commit(conn: Connection, script: str, count: int) -> None:
+def _record_commit(conn: Connection, script: str, count: int, source: bytes | None,
+                   encoding: str | None) -> None:
     directory = state_dir()
     directory.mkdir(parents=True, exist_ok=True)
     record = {
         "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "connection": conn.name,
-        "script_sha256": hashlib.sha256(script.encode("utf-8")).hexdigest(),
+        # The file's own bytes, so the record matches `sha256sum <file>` (Spec v1.5), and the
+        # encoding the text was read in.
+        "script_sha256": hashlib.sha256(source if source is not None else script.encode("utf-8")).hexdigest(),
+        "encoding": encoding or "utf-8",
         "statements": count,
     }
     with (directory / "commits.jsonl").open("a", encoding="utf-8") as fh:
@@ -191,7 +195,8 @@ Confirm = Callable[[Connection], bool]
 
 
 def run_script(conn: Connection, script: str, *, commit: bool = False,
-               confirm: Confirm | None = None, verbose_errors: bool = False) -> dict[str, object]:
+               confirm: Confirm | None = None, verbose_errors: bool = False,
+               source: bytes | None = None, encoding: str | None = None) -> dict[str, object]:
     if conn.cls != "writable":
         raise Refusal("connection.not-writable",
                       f"connection {conn.name!r} is {conn.cls}; run-script needs a writable connection")
@@ -256,8 +261,10 @@ def run_script(conn: Connection, script: str, *, commit: bool = False,
             if not confirm(conn):
                 raise Refusal("commit.not-confirmed",
                               "the confirmation did not match the connection name; rolled back")
+            # The authorization is recorded BEFORE the commit (Spec v1.5): a record that cannot be
+            # written rolls the script back, so a commit never lands without its record and a
+            # refusal never follows a commit.
+            _record_commit(conn, script, len(statements), source, encoding)
             session.commit_on_exit()
             committed = True
-    if committed:
-        _record_commit(conn, script, len(statements))
     return {"connection": conn.name, "committed": committed, "statements": outputs}

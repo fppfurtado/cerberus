@@ -1,7 +1,7 @@
 # Spec: cerberus — the outside-iris carrier for sensitive database sources (first build)
 
 - Frozen at: 2026-11-15
-- Spec version: v1.4
+- Spec version: v1.5
 - Source: PRD `sensitive-database-source` v4 (frozen 2026-11-15; v4 adds this carrier to the candidate
   list and changes nothing else; lives in the iris repository,
   `prds/sensitive-database-source.PRD.md`), projected from Brief `sensitive-database-source` v3 (same
@@ -63,6 +63,14 @@
   own exemption, unchanged); the words after `cerberus` must be exactly `hook claude-code`; the named
   binary must exist and be executable; and the lexical check's over-count is a stated residual. No rule of
   the hook changes. Approval: the operator's merge of the pull request that carries this text.
+  v1.4 → v1.5 (2026-11-19), from SP-T11's replay (fppfurtado/cerberus#13): a vendor script in a legacy
+  single-byte encoding crashed `run-script` with a traceback, before connecting. The script file is now
+  decoded as declared — UTF-8 by default (a leading byte-order mark dropped), or the encoding `--encoding`
+  names — and a file that cannot be read or decoded is a named refusal; a statement with a character the
+  client encoding lacks is refused as `encoding.unrepresentable`; the commit record hashes the file's
+  bytes and names the encoding; and in the four printing commands an unexpected exception is a refusal
+  that names only its class (an interrupt and the hook excepted). No rule of the gate changes. Approval: the operator's merge of the pull request that
+  carries this text.
 - Branch taken (PRD v3 "Branches on J5 test 1"): test 1 ended without an answering verdict (attempt 1
   INCONCLUSIVE, attempt 2 HELD, attempt 3 designed and not funded; iris#34 comment of 2026-11-13) and no
   further test-1 budget is recorded, so the first build (PR1–PR6, PR8a, PR9–PR11, PR13) is entirely outside
@@ -188,7 +196,10 @@ after step 3 of the read path; a refusal before it (custody, an unreachable serv
 than declared) says why none was established.
 
 **Commit authorization record** (PR10(b)): one line appended to `~/.local/state/cerberus/commits.jsonl` —
-timestamp, connection, script SHA-256, statement count.
+timestamp, connection, script SHA-256, statement count. The hash is of the file's own bytes, so it matches
+`sha256sum` of the authorized file, and the record names the encoding the script was read in, by its
+resolved codec name (v1.5). The record is written before the commit: if it cannot be written, the script is
+rolled back, so no commit lands without its record and no refusal follows a commit (v1.5).
 
 ### Interfaces / contracts
 
@@ -225,8 +236,18 @@ timestamp, connection, script SHA-256, statement count.
   The non-listed columns are computed from the live catalog, so a column added later is denied until
   listed. Statistics relations that expose column samples (`pg_stats`, `pg_statistic`, extended statistics)
   and credential catalogs are in a built-in `deny_relations` list.
-- **Rollback-only scripts (PR10).** `run-script` accepts only a `writable` connection. It parses the whole
-  script first and refuses, before connecting: any transaction-control statement (`BEGIN`, `COMMIT`, `END`,
+- **Rollback-only scripts (PR10).** `run-script` accepts only a `writable` connection. It reads the script
+  file as UTF-8 unless `--encoding <name>` names its encoding (v1.5: vendor scripts arrive in legacy
+  single-byte encodings); a leading byte-order mark is dropped whenever the encoding is UTF-8, named or
+  not. A file it cannot read is refused as `script.unreadable`, and one that does not decode, or an
+  unknown or non-text encoding name (`base64`), as `script.encoding`, whose detail names the option. Only the UTF-8 default
+  catches a wrong guess: a single-byte encoding decodes any file, so a script saved in Windows-1252 and
+  read as `latin1` runs with its bytes 0x80–0x9F turned into control characters, unrefused (the detail
+  says so and suggests `cp1252` for Windows editors). The file's encoding is independent of the
+  connection's client encoding, which governs what is sent: a statement holding a character the client
+  encoding cannot represent is refused as `encoding.unrepresentable`, naming the encoding and the
+  character's index in the text being sent (the statement, or a name taken from it for a catalog lookup),
+  never the character — on the read path too. It parses the whole script first and refuses, before connecting: any transaction-control statement (`BEGIN`, `COMMIT`, `END`,
   `ROLLBACK`, `PREPARE TRANSACTION`, …; `SAVEPOINT` and `ROLLBACK TO` are allowed), any statement that cannot
   run inside a transaction or whose effect a rollback does not undo (`VACUUM`, `CREATE DATABASE`,
   `CREATE INDEX CONCURRENTLY`, `ALTER SYSTEM`, `COPY … PROGRAM`), denylisted functions, and client
@@ -411,7 +432,11 @@ timestamp, connection, script SHA-256, statement count.
   never a row value. On the read path a server error is truncated to its SQLSTATE and first line (a query
   there that names a non-listed column is refused before it runs); in a script, where a statement may write
   a restricted column, it shows its SQLSTATE and condition name only (v1.1). `--verbose-errors` shows the
-  full text.
+  full text. Any other exception in a command that prints a result or refusal (`query`, `run-script`,
+  `connections`, `doctor`) is a refusal with rule `internal.error` that names only the exception class —
+  no traceback, not the exception's message, which can quote a value (v1.5). Outside it: an interrupt
+  (Ctrl-C), which Python reports with a traceback of frames, not values; a failure while printing the
+  refusal itself; and the hook, whose output belongs to the harness.
 - **Residual risks stated to the operator at M5 (PRD R1).** No server-side backstop exists for PR4. Known
   residuals of this design: a built-in function that this Spec's denylist misses; a relation reached only
   through a path none of the three sources shows (for example a function inside an allowlisted function); an implicit cast or a
@@ -547,7 +572,21 @@ timestamp, connection, script SHA-256, statement count.
   "IF `--commit` is given and stdin is not an interactive terminal, THEN the system SHALL refuse"; "WHEN
   `--commit` is confirmed on a terminal by typing the connection name, the system SHALL commit and append one
   authorization record (time, connection, script hash)"; "IF the connection is not `writable`, THEN
-  `run-script` SHALL refuse" — depends on: SP-T3, SP-T4
+  `run-script` SHALL refuse"; v1.5: "IF the script file does not decode as UTF-8 and no `--encoding` is
+  given, THEN the system SHALL refuse with `script.encoding` before connecting, naming the option"; "WHEN
+  `--encoding` names an encoding the file decodes in, the system SHALL run the decoded text as any script"
+  (a wrong single-byte name is not detected, above); "IF the file cannot be read, THEN the system SHALL
+  refuse with `script.unreadable`"; "IF a statement holds a character the client encoding cannot
+  represent, THEN the system SHALL refuse with `encoding.unrepresentable`, naming no character"; "WHEN a
+  commit is recorded, its hash SHALL equal the SHA-256 of the file's bytes and the record SHALL name the
+  encoding, and IF the record cannot be written, THEN the script SHALL be rolled back"; "IF `query`,
+  `run-script`, `connections` or `doctor` raises an unexpected exception, THEN it
+  SHALL print a refusal with rule `internal.error` naming only the exception class, and print no
+  traceback" (tests: a Windows-1252 script with and without the option; a byte-order mark, defaulted and
+  with `UTF8` named; an unknown encoding name; a missing file; a character LATIN1 lacks, on `query` and
+  `run-script`; the commit record of a Windows-1252 file; an injected failure in each of the four commands,
+  whose message's marker SHALL be absent from stdout and stderr; the hook re-raising) — depends on:
+  SP-T3, SP-T4
 - SP-T9: `cerberus hook claude-code` — implements PR9 — acceptance (EARS; v1.3 states the whole list, v1.2's
   "names no declared connection … answer nothing" and "missing or unreadable … block nothing" clauses are
   replaced): "WHEN a recorded pre-tool event carries a shell command that names a declared connection's

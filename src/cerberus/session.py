@@ -80,6 +80,13 @@ def establish_guarantee(db: psycopg.Connection) -> dict[str, str]:
     return {"class": "none", "basis": "transaction_read_only is off"}
 
 
+def _unrepresentable(exc: UnicodeEncodeError) -> tuple[str, str]:
+    return ("encoding.unrepresentable",
+            f"the connection's client encoding ({exc.encoding}) cannot represent a character of the "
+            f"text being sent (character {exc.start} of the statement or of a name taken from it); "
+            "replace that character, or declare a client encoding that has it")
+
+
 class ReadSession:
     """``with ReadSession(conn) as s:`` — a guarded read-only transaction on a declared connection."""
 
@@ -127,7 +134,10 @@ class ReadSession:
 
     def execute(self, sql: str, params: Any = None) -> psycopg.Cursor:
         assert self.db is not None, "session is not open"
-        return self.db.execute(sql, params)
+        try:
+            return self.db.execute(sql, params)
+        except UnicodeEncodeError as exc:  # the driver encodes in the client encoding (Spec v1.5)
+            raise self.refuse(*_unrepresentable(exc)) from None
 
 
 class WriteSession:
@@ -170,4 +180,7 @@ class WriteSession:
 
     def execute(self, sql: str, params: Any = None) -> psycopg.Cursor:
         assert self.db is not None, "session is not open"
-        return self.db.execute(sql, params)
+        try:
+            return self.db.execute(sql, params)
+        except UnicodeEncodeError as exc:  # the driver encodes in the client encoding (Spec v1.5)
+            raise Refusal(*_unrepresentable(exc)) from None
