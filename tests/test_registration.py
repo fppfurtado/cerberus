@@ -19,6 +19,12 @@ def claude_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     d.mkdir()
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(d))
     monkeypatch.setattr(registration, "MANAGED_SETTINGS", (tmp_path / "managed-settings.json",))
+    # A bare `cerberus` resolves on doctor's PATH: give it one that holds exactly one, under test control.
+    bin_dir = tmp_path / "path-bin"
+    bin_dir.mkdir()
+    (bin_dir / "cerberus").write_text("#!/bin/sh\n")
+    (bin_dir / "cerberus").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
     return d
 
 
@@ -77,7 +83,7 @@ def binary(tmp_path: Path) -> Path:
     "uv run cerberus hook claude-code",
     "{bin} hook claude-code",
     "env FOO=1 cerberus hook claude-code",
-    # the deployment's guarded form, verbatim from the dotfiles settings template (Spec v1.4)
+    # the deployment's guarded form, as the dotfiles settings template writes it, its binary at a test path
     'test -x "{bin}" || exit 0; exec "{bin}" hook claude-code',
 ])
 def test_command_forms_that_run_the_hook_are_recognized(claude_dir: Path, binary: Path, template: str) -> None:
@@ -91,6 +97,7 @@ def test_command_forms_that_run_the_hook_are_recognized(claude_dir: Path, binary
     "echo cerberus hook claude-code",
     "cerberus hook",
     "cerberus query x hook claude-code",
+    "cerberus hook claude-code --help",
     'test -x "{bin}" || exit 0; exec "{bin}" doctor',
     # the guarded form whose binary is gone runs `exit 0`: the hook never runs (Spec v1.4)
     'test -x "{missing}" || exit 0; exec "{missing}" hook claude-code',
@@ -99,6 +106,25 @@ def test_other_commands_do_not_count(claude_dir: Path, binary: Path, template: s
     command = template.format(bin=binary, missing=binary.parent / "gone" / "cerberus")
     write(claude_dir / "settings.json", settings(command={"type": "command", "command": command}))
     assert registration.report()["ok"] is False
+
+
+def test_a_binary_spelled_with_home_counts(claude_dir: Path, binary: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(binary.parent.parent))
+    command = 'test -x "$HOME/bin/cerberus" || exit 0; exec "$HOME/bin/cerberus" hook claude-code'
+    write(claude_dir / "settings.json", settings(command={"type": "command", "command": command}))
+    assert registration.report()["ok"] is True
+
+
+def test_a_bare_name_missing_from_path_does_not_count(claude_dir: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PATH", str(claude_dir))  # no cerberus here
+    write(claude_dir / "settings.json", settings())
+    assert registration.report()["ok"] is False
+
+
+def test_command_and_exec_prefixes_are_skipped(claude_dir: Path) -> None:
+    for command in ("command cerberus hook claude-code", "exec cerberus hook claude-code"):
+        write(claude_dir / "settings.json", settings(command={"type": "command", "command": command}))
+        assert registration.report()["ok"] is True, command
 
 
 def test_a_non_executable_binary_does_not_count(claude_dir: Path, binary: Path) -> None:

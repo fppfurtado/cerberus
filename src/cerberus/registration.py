@@ -66,7 +66,7 @@ def runs_hook(command: object) -> bool:
         return False
     for segment in SEGMENT_SPLIT.split(command):
         words = program_words(segment)
-        if words[:1] and Path(words[0]).name == "cerberus" and words[1:3] == ["hook", "claude-code"]:
+        if words[:1] and Path(words[0]).name == "cerberus" and words[1:] == ["hook", "claude-code"]:
             if _executable(words[0]):
                 return True
     return False
@@ -76,7 +76,7 @@ def _executable(program: str) -> bool:
     """The named program exists and is executable: a guarded registration whose binary is gone runs
     `exit 0`, so the hook never runs (Spec v1.4)."""
     if "/" in program:
-        path = Path(program).expanduser()
+        path = Path(os.path.expandvars(program)).expanduser()
         return path.is_file() and os.access(path, os.X_OK)
     return shutil.which(program) is not None
 
