@@ -94,3 +94,63 @@ def test_a_server_error_shows_its_first_line_unless_verbose(declared, outside: P
     assert refusal["rule"] == "server.error"
     assert refusal["detail"].startswith("22P02:")
     assert "\n" not in refusal["detail"]
+
+
+# --- Spec v1.5: a script file is decoded as declared; a failure is a named refusal, never a traceback ---
+
+LEGACY_SCRIPT = "-- Município: a comment in the vendor's legacy encoding\nselect 1 as one;\n"
+
+
+def test_a_script_not_in_utf8_is_refused_by_name_and_points_to_encoding(declared, outside: Path) -> None:
+    path = outside / "vendor.sql"
+    path.write_bytes(LEGACY_SCRIPT.encode("cp1252"))
+    code, out = run(["run-script", "scratchdb", str(path)], cwd=outside)
+    assert code == 3, out
+    refusal = json.loads(out)
+    assert refusal["rule"] == "script.encoding" and "--encoding" in refusal["detail"]
+    assert "Traceback" not in out
+
+
+def test_encoding_option_runs_a_legacy_script_rolled_back(declared, outside: Path) -> None:
+    path = outside / "vendor.sql"
+    path.write_bytes(LEGACY_SCRIPT.encode("cp1252"))
+    code, out = run(["run-script", "scratchdb", str(path), "--encoding", "cp1252"], cwd=outside)
+    assert code == 0, out
+    result = json.loads(out)
+    assert result["committed"] is False
+    assert result["statements"][0]["rows"] == [[1]]
+
+
+def test_a_utf8_script_with_a_byte_order_mark_runs(declared, outside: Path) -> None:
+    path = outside / "bom.sql"
+    path.write_bytes(LEGACY_SCRIPT.encode("utf-8-sig"))
+    code, out = run(["run-script", "scratchdb", str(path)], cwd=outside)
+    assert code == 0, out
+
+
+@pytest.mark.parametrize("args,rule", [
+    (["--encoding", "no-such-encoding"], "script.encoding"),
+    ([], "script.unreadable"),
+])
+def test_bad_encoding_name_and_missing_file_are_named_refusals(declared, outside: Path, args, rule) -> None:
+    path = outside / ("vendor.sql" if args else "missing.sql")
+    if args:
+        path.write_text("select 1;")
+    code, out = run(["run-script", "scratchdb", str(path), *args], cwd=outside)
+    assert code == 3, out
+    assert json.loads(out)["rule"] == rule
+
+
+def test_an_unexpected_failure_is_a_refusal_naming_only_the_exception_class(monkeypatch, capsys) -> None:
+    from cerberus import cli
+
+    def boom(_args):
+        raise ValueError("a message that could quote secret-value-123")
+
+    monkeypatch.setattr(cli, "_connections", boom)
+    code = cli.main(["connections"])
+    out = capsys.readouterr().out
+    assert code == 3
+    refusal = json.loads(out)
+    assert refusal["rule"] == "internal.error" and "ValueError" in refusal["detail"]
+    assert "secret-value-123" not in out

@@ -44,8 +44,30 @@ def _confirm_on_terminal(conn: config.Connection) -> bool:
     return sys.stdin.readline().strip() == conn.name
 
 
+def read_script(path: str, encoding: str | None) -> str:
+    """The script's text, decoded as declared (Spec v1.5): UTF-8 by default (a byte-order mark
+    dropped), else ``--encoding``. A file that cannot be read or decoded is a named refusal."""
+    try:
+        data = open(path, "rb").read()
+    except OSError as exc:
+        raise Refusal("script.unreadable",
+                      f"cannot read the script file ({type(exc).__name__})") from None
+    name = encoding or "utf-8-sig"
+    try:
+        return data.decode(name)
+    except LookupError:
+        raise Refusal("script.encoding", f"unknown encoding {encoding!r}") from None
+    except UnicodeDecodeError as exc:
+        shown = encoding or "UTF-8"
+        raise Refusal(
+            "script.encoding",
+            f"the script is not valid {shown} (byte {exc.start}); pass --encoding <name> "
+            "(for example latin1 or cp1252) to read it in its own encoding, or convert it to UTF-8",
+        ) from None
+
+
 def _run_script(args: argparse.Namespace) -> int:
-    script = open(args.file, encoding="utf-8").read()
+    script = read_script(args.file, args.encoding)
     confirm = _confirm_on_terminal if args.commit and sys.stdin.isatty() else None
     result = run_script(config.load(args.connection), script, commit=args.commit, confirm=confirm,
                         verbose_errors=args.verbose_errors)
@@ -91,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     script.add_argument("connection")
     script.add_argument("file")
+    script.add_argument("--encoding", metavar="NAME",
+                        help="the script file's encoding (default UTF-8), e.g. latin1 or cp1252")
     script.add_argument("--commit", action="store_true",
                         help="commit instead of rolling back, after typing the connection name on a terminal")
     script.add_argument("--verbose-errors", action="store_true",
@@ -113,6 +137,13 @@ def main(argv: list[str] | None = None) -> int:
         return args.run(args)
     except Refusal as refusal:
         print(_json(refusal.as_dict()))
+        return EXIT_REFUSED
+    except Exception as exc:  # noqa: BLE001 — Spec v1.5: never a traceback, never a message
+        if args.command == "hook":
+            raise  # the hook's own contract: its output is the harness's, not a refusal object
+        print(_json(Refusal("internal.error",
+                            f"cerberus failed unexpectedly ({type(exc).__name__}); no detail is shown, "
+                            "since an error message can quote a value").as_dict()))
         return EXIT_REFUSED
 
 
