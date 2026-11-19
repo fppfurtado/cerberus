@@ -17,7 +17,7 @@ Project language is **English** — code, comments, CLI help, docs and commit me
 
 No host, database, schema, table or column name of a real instance appears in code, tests, fixtures,
 docs or commit messages. Tests run against the synthetic primary and standby the fixture starts
-(`tests/conftest.py`). The connection declarations live only in `~/.config/cerberus/`.
+(`tests/conftest.py`). The connection declarations live only in the configuration directory (`$XDG_CONFIG_HOME/cerberus/`, `~/.config/cerberus/` by default).
 
 
 <!-- agent-kit operational-floor v20 — single source: agent-kit/onboarding/operational-floor.md
