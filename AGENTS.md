@@ -218,3 +218,12 @@ protection. These are per-harness / per-platform add-ons, not a dependency of th
 absent, the self-checks still bind.
 
 <!-- /agent-kit operational-floor v20 -->
+
+## Building against a deployed artifact
+
+When code recognizes or checks something that already exists deployed (a hook registration in the
+operator's settings, a connections file rendered by the dotfiles), read the deployed form first and put
+it, verbatim with only its paths substituted, among the test cases. The v1.3 `doctor` was specified and
+tested from the plain `cerberus hook claude-code` form and missed the guarded form the deployment uses
+(fixed in Spec v1.4). A recognizer also needs its negative cases tested: a widening that accepts the
+deployed form can accept a form that never runs (v1.4's first blind read).

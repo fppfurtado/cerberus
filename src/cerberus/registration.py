@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 
-from cerberus.hook import program_words
+from cerberus.hook import SEGMENT_SPLIT, program_words
 
 REQUIRED = (
     ("PreToolUse", "Bash"),
@@ -60,13 +61,24 @@ def matcher_selects(matcher: object, tool: str) -> bool:
 
 
 def runs_hook(command: object) -> bool:
+    """True when a segment of ``command`` runs ``cerberus hook claude-code`` (Spec v1.4)."""
     if not isinstance(command, str):
         return False
-    words = program_words(command)
-    if not words or Path(words[0]).name != "cerberus":
-        return False
-    rest = words[1:]
-    return any(rest[i:i + 2] == ["hook", "claude-code"] for i in range(len(rest)))
+    for segment in SEGMENT_SPLIT.split(command):
+        words = program_words(segment)
+        if words[:1] and Path(words[0]).name == "cerberus" and words[1:] == ["hook", "claude-code"]:
+            if _executable(words[0]):
+                return True
+    return False
+
+
+def _executable(program: str) -> bool:
+    """The named program exists and is executable: a guarded registration whose binary is gone runs
+    `exit 0`, so the hook never runs (Spec v1.4)."""
+    if "/" in program:
+        path = Path(os.path.expandvars(program)).expanduser()
+        return path.is_file() and os.access(path, os.X_OK)
+    return shutil.which(program) is not None
 
 
 def _registered(settings: dict) -> set[tuple[str, str]]:
