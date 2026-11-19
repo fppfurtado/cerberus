@@ -22,7 +22,7 @@ to a declared connection. It will:
 
 Commands: `cerberus query`, `cerberus run-script`, `cerberus connections`, `cerberus doctor`, and
 `cerberus hook claude-code` (a pre-tool hook that refuses a direct database client aimed at a declared
-connection).
+connection, and an agent's read, search or shell command that names a holder of a connection's password).
 
 ## What it is not
 

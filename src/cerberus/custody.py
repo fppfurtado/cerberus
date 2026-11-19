@@ -11,6 +11,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from cerberus import registration
 from cerberus.config import Connection, load_all
 from cerberus.refusal import Refusal
 
@@ -97,6 +98,22 @@ def user_pgpass() -> Path:
     return Path.home() / ".pgpass"
 
 
+def _holder(connection: str, path: Path) -> dict[str, object]:
+    """A declared other holder of a connection's password (``deny_paths``, Spec v1.3)."""
+    entry: dict[str, object] = {"connection": connection, "location": str(path), "exists": path.exists()}
+    problems = []
+    if not entry["exists"]:
+        problems.append("missing: the declaration protects nothing at this path")
+    if inside_working_tree(path):
+        problems.append("inside a git working tree")
+    if path.is_file() and stat.S_IMODE(os.stat(path).st_mode) & 0o077:
+        problems.append("readable by group or others")
+    entry["ok"] = not problems
+    if problems:
+        entry["problems"] = problems
+    return entry
+
+
 def doctor() -> dict[str, object]:
     """Custody report. Prints no secret: passwords are compared in memory only."""
     connections = load_all()
@@ -125,10 +142,15 @@ def doctor() -> dict[str, object]:
         conn.name for conn in connections.values() if any(e.matches(conn) for e in pgpass)
     )
     sharing = sorted({e.host for e in pgpass if e.password in custody_passwords})
-    clean = all(p["ok"] for p in passfiles) and not still_in_pgpass and not sharing
+    holders = [_holder(conn.name, path) for conn in connections.values() for path in conn.deny_paths]
+    hook = registration.report()
+    clean = (all(p["ok"] for p in passfiles) and all(h["ok"] for h in holders) and not still_in_pgpass
+             and not sharing and hook["ok"])
     return {
         "clean": clean,
         "passfiles": passfiles,
         "connections_in_pgpass": still_in_pgpass,
         "pgpass_hosts_sharing_custody_password": sharing,
+        "other_holders": holders,
+        "hook": hook,
     }

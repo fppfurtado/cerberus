@@ -60,6 +60,7 @@ dbname = "inventory"
 user = "reader"
 class = "server-enforced"
 hook_match = ["inventory-replica-alias"]
+deny_paths = ["~/tools/wrapper.env", "~/edge"]
 
 [connection.scratch]
 host = "{WRITABLE_HOST}"
@@ -69,6 +70,10 @@ user = "writer"
 class = "writable"
 """)
     (cfg / "pgpass").write_text("x:5432:*:reader:pw\n")
+    (home / "tools").mkdir()
+    (home / "tools" / "wrapper.env").write_text("PW=x\n")
+    (home / "edge").mkdir()
+    (home / "edge" / "cred").write_text("x\n")
     return home
 
 
@@ -158,10 +163,157 @@ def test_a_missing_connections_file_blocks_nothing(home) -> None:
     assert hook(pre_bash(f"psql -h {HOST}")) == (0, None)
 
 
-def test_an_unreadable_connections_file_blocks_nothing(home) -> None:
+def test_a_connections_file_that_is_not_toml_blocks_no_host(home) -> None:
     (home / ".config" / "cerberus" / "connections.toml").write_text("not [valid toml")
     assert hook(pre_bash(f"psql -h {HOST}")) == (0, None)
 
 
 def test_malformed_input_blocks_nothing(home) -> None:
     assert hook("not json") == (0, None)
+
+
+# --- Spec v1.3: protected paths -------------------------------------------------------------------
+
+
+def pre_grep(path: str | None, cwd: str | None = None) -> dict:
+    tool_input = {"pattern": "password"}
+    if path is not None:
+        tool_input["path"] = path
+    event = {**COMMON, "hook_event_name": "PreToolUse", "tool_name": "Grep", "tool_input": tool_input}
+    if cwd is not None:
+        event["cwd"] = cwd
+    return event
+
+
+@pytest.mark.parametrize("command", [
+    "cat ~/.config/cerberus/pgpass",
+    "cat $HOME/.config/cerberus/pgpass",
+    "cat ${HOME}/.config/cerberus/pgpass",
+    "cat \"$XDG_CONFIG_HOME/cerberus/pgpass\"",
+    "cat ${XDG_CONFIG_HOME}/cerberus/pgpass",
+    "cd ~/.config/cerberus && cat pgpass",
+    "cd ~/.config/cerberus; head -1 ./pgpass",
+    "source ~/tools/wrapper.env",
+    "grep -r x ~/edge",
+    "ls ~/edge/",
+    "cat ~/edge/cred",
+    "cerberus run-script scratch ~/tools/wrapper.env",
+])
+def test_a_shell_command_naming_a_protected_path_is_denied(home, command) -> None:
+    assert "credential" in denial(hook(pre_bash(command))[1])
+
+
+def test_the_absolute_spelling_is_denied(home) -> None:
+    denial(hook(pre_bash(f"cat {home}/.config/cerberus/pgpass"))[1])
+
+
+@pytest.mark.parametrize("command", [
+    "cat ~/tools/wrapper.envrc",
+    "ls ~/.config/cerberus",
+    "cat ~/.config/cerberus/connections.toml",
+    "ls ~/edges",
+    "echo pgpass",
+])
+def test_a_shell_command_sharing_only_a_prefix_or_a_word_passes(home, command) -> None:
+    assert hook(pre_bash(command)) == (0, None)
+
+
+@pytest.mark.parametrize("tool", ["Read", "Edit", "Write", "MultiEdit"])
+def test_file_tools_on_a_deny_path_file_are_denied(home, tool) -> None:
+    denial(hook(pre_file(tool, str(home / "tools" / "wrapper.env")))[1])
+
+
+def test_a_file_under_a_protected_directory_is_denied(home) -> None:
+    denial(hook(pre_file("Read", str(home / "edge" / "cred")))[1])
+
+
+def test_a_relative_path_resolves_against_the_event_cwd(home) -> None:
+    event = {**pre_file("Read", "pgpass"), "cwd": str(home / ".config" / "cerberus")}
+    denial(hook(event)[1])
+
+
+def test_a_symlink_to_a_protected_file_is_denied(home) -> None:
+    link = home / "innocent.txt"
+    link.symlink_to(home / "tools" / "wrapper.env")
+    denial(hook(pre_file("Read", str(link)))[1])
+
+
+@pytest.mark.parametrize("which", ["config_dir", "home", "file", "deny_dir"])
+def test_grep_over_or_into_a_protected_path_is_denied(home, which) -> None:
+    path = {"config_dir": home / ".config" / "cerberus", "home": home,
+            "file": home / ".config" / "cerberus" / "pgpass", "deny_dir": home / "edge"}[which]
+    assert "narrower" in denial(hook(pre_grep(str(path)))[1])
+
+
+def test_grep_without_a_path_uses_the_event_cwd(home) -> None:
+    denial(hook(pre_grep(None, cwd=str(home)))[1])
+
+
+def test_grep_over_a_directory_without_protected_paths_passes(home) -> None:
+    (home / "project").mkdir()
+    assert hook(pre_grep(str(home / "project"))) == (0, None)
+    assert hook(pre_grep(None, cwd=str(home / "project"))) == (0, None)
+
+
+# --- Spec v1.3: a broken connections file ---------------------------------------------------------
+
+
+def test_a_missing_connections_file_still_protects_the_default_password_file(home) -> None:
+    (home / ".config" / "cerberus" / "connections.toml").unlink()
+    denial(hook(pre_file("Read", str(home / ".config" / "cerberus" / "pgpass")))[1])
+    denial(hook(pre_bash("cat ~/.config/cerberus/pgpass"))[1])
+
+
+def test_a_connections_file_that_is_not_toml_still_protects_the_default_password_file(home) -> None:
+    (home / ".config" / "cerberus" / "connections.toml").write_text("not [valid toml")
+    denial(hook(pre_file("Read", str(home / ".config" / "cerberus" / "pgpass")))[1])
+
+
+def test_an_invalid_declaration_still_protects_what_it_shows(home) -> None:
+    (home / ".config" / "cerberus" / "connections.toml").write_text(f"""
+[connection.replica]
+host = "{HOST}"
+port = "not-a-number"
+hook_match = ["inventory-replica-alias", 7]
+deny_paths = ["~/tools/wrapper.env", "relative/ignored"]
+""")
+    reason = denial(hook(pre_bash(f"psql -h {HOST}"))[1])
+    assert "'replica'" in reason and "invalid" in reason and "cerberus query" not in reason
+    denial(hook(pre_bash("psql service=inventory-replica-alias"))[1])
+    denial(hook(pre_file("Read", str(home / "tools" / "wrapper.env")))[1])
+    assert hook(pre_bash("ls")) == (0, None)
+
+
+def test_a_relative_deny_path_makes_the_declaration_invalid(home) -> None:
+    from cerberus import config
+    from cerberus.refusal import Refusal
+
+    (home / ".config" / "cerberus" / "connections.toml").write_text(f"""
+[connection.replica]
+host = "{HOST}"
+port = 5432
+dbname = "inventory"
+user = "reader"
+class = "server-enforced"
+deny_paths = ["tools/wrapper.env"]
+""")
+    with pytest.raises(Refusal) as exc:
+        config.load_all()
+    assert exc.value.rule == "config.invalid" and "deny_paths" in exc.value.detail
+
+
+def test_grep_with_a_relative_path_resolves_against_the_event_cwd(home) -> None:
+    denial(hook(pre_grep("pgpass", cwd=str(home / ".config" / "cerberus")))[1])
+    (home / "project").mkdir()
+    assert hook(pre_grep("src", cwd=str(home / "project"))) == (0, None)
+
+
+def test_an_invalid_declaration_still_adds_the_pointer_on_a_failed_command(home) -> None:
+    (home / ".config" / "cerberus" / "connections.toml").write_text(f"""
+[connection.replica]
+host = "{HOST}"
+port = "not-a-number"
+""")
+    error = f'connection to server at "{HOST}" failed: fe_sendauth: no password supplied'
+    out = hook(failed_bash("python3 report.py", error))[1]["hookSpecificOutput"]
+    assert "'replica'" in out["additionalContext"] and "invalid" in out["additionalContext"]

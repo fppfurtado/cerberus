@@ -12,10 +12,17 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 16: the version the design was measured on; 15: the case study's servers (Spec v1.3).
+        postgres: ["16", "15"]
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3
       - name: Install
         run: uv sync --locked
-      - name: Test (synthetic PostgreSQL primary and standby, started by the fixture)
+      - name: Test (synthetic PostgreSQL ${{ matrix.postgres }} primary and standby, started by the fixture)
+        env:
+          CERBERUS_TEST_PG_IMAGE: postgres:${{ matrix.postgres }}
         run: uv run pytest -v
