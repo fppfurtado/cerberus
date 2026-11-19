@@ -29,8 +29,9 @@
   session and in `decisions/0001` D11–D12.
   v1.1 → v1.2 (2026-11-19), from the build's ledger and the final review (fppfurtado/cerberus#5, #4).
   (1) The M5 residual list gains two residuals found in the first build and left out of v1.1: a comparison
-  the server resolves by type where the query names no operator (the class of the `BETWEEN` case #5
-  named; its review found `CASE`, `GREATEST`/`LEAST` and implicit sort and equality operators in it), and
+  the server resolves through a user-defined type's operator class (the class of the `BETWEEN` case #5
+  named; its review found `CASE`, `GREATEST`/`LEAST`, implicit sort, equality and partition operators, and
+  built-in array, record and range operations in it), and
   the grammar-version gap between the parser and the server. (2) Choices: the `pglast` claim "the gate and the server cannot disagree" is qualified to the
   grammar version, and the `psycopg` claim "encodes per the connection's client encoding" is qualified to
   exclude its JSON loader (fppfurtado/cerberus#7, reported upstream as psycopg/psycopg#1504). (3) Records:
@@ -276,8 +277,7 @@ timestamp, connection, script SHA-256, statement count.
   the gate and the server agree on what a statement is, within one grammar version (v1.2: `pglast` 8.8
   parses the PostgreSQL 18 grammar and older servers run older ones; a statement only the newer grammar
   accepts passes the gate's parse and fails on the server as `server.error`; text both grammars accept
-  but parse differently was not searched for; both stated at M5, re-checked in SP-T11 against the
-  replicas' versions); `sqlglot` is an independent grammar whose
+  but parse differently was not searched for, and no task plans that search; both stated at M5); `sqlglot` is an independent grammar whose
   authors of a sibling project document edge-case disagreement. Retrieved 2026-11-15: `pglast` 8.8
   (2026-11-13, PostgreSQL 18 grammar) on PyPI. Pin an exact version (PRD R2: an upstream project broke on an
   unpinned-then-vanished parser release).
@@ -309,11 +309,13 @@ timestamp, connection, script SHA-256, statement count.
 - **Residual risks stated to the operator at M5 (PRD R1).** No server-side backstop exists for PR4. Known
   residuals of this design: a built-in function that this Spec's denylist misses; a relation reached only
   through a path none of the three sources shows (for example a function inside an allowlisted function); an implicit cast or a
-  user-defined type's output function; a comparison the server resolves by type where the query names no
-  operator — `BETWEEN` in its four kinds (the parser records the keyword, not an operator, so the gate
-  does not check it), simple `CASE`, `GREATEST`/`LEAST`, and the sort and equality operators of `ORDER BY`,
-  `DISTINCT`, `GROUP BY`, set operations and `USING`/`NATURAL` joins — which on a user-defined type may
-  reach a user-defined operator the allowlist never sees (v1.2); the grammar-version gap: a statement only
+  user-defined type's output function; a comparison the server resolves through a user-defined type's
+  operator class, which may run a user-defined operator the allowlist never sees — where the query names
+  no operator (`BETWEEN` in its four kinds, whose keyword the parser records instead of an operator, so the
+  gate does not check it; simple `CASE`; `GREATEST`/`LEAST`; the sort and equality operators of `ORDER BY`
+  without `USING`, `DISTINCT`, `GROUP BY`, window `PARTITION BY`, set operations and `USING`/`NATURAL`
+  joins), and where a built-in array, record or range operation compares the elements of such a type
+  (v1.2); the grammar-version gap: a statement only
   the parser's newer grammar accepts fails on the server instead of at the gate, and text both grammars
   accept but parse differently was not searched for (v1.2); side channels through timing or
   error text; sequence values consumed
