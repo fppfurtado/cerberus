@@ -10,7 +10,7 @@ import codecs
 import json
 import sys
 
-from cerberus import config, custody
+from cerberus import __version__, config, custody
 from cerberus.read import run_query
 from cerberus.script import run_script
 from cerberus.refusal import Refusal
@@ -107,6 +107,7 @@ def _doctor(_: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cerberus")
+    parser.add_argument("--version", action="version", version=f"cerberus {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
 
     query = commands.add_parser("query", help="run one guarded SELECT on a declared read connection")
